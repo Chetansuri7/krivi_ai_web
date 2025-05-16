@@ -1,0 +1,1649 @@
+--- app/lib/utils.ts ---
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
+--- app/lib/api.config.ts ---
+// app/lib/api.config.ts
+
+// For client-side access in Remix + Vite, use VITE_ prefix for env vars
+// Make sure VITE_API_BASE_URL is defined in your .env file
+export const API_BASE_URL = process.env.VITE_API_BASE_URL;
+
+// This check is for build/server time. On the client, it might be undefined initially.
+// It's better to check for API_BASE_URL before each use in getApiUrl.
+if (!API_BASE_URL && typeof process !== 'undefined' && process.env.NODE_ENV !== 'production') {
+  // This warning will appear during server-side rendering or build if not set
+  console.warn(
+    "WARNING: VITE_API_BASE_URL environment variable is not set. Please define it in your .env file (e.g., VITE_API_BASE_URL=https://your-api.com)."
+  );
+}
+
+export const API_ROUTES = {
+  // Auth
+  GOOGLE_LOGIN: "/auth/google/login",
+  AUTH_REFRESH: "/auth/refresh",
+  AUTH_CHECK: "/auth/check",
+  AUTH_LOGOUT: "/auth/logout",
+
+  // Chat - Ensure path starts with '/'
+  CHAT_SESSION_LIST: "/api/chat/session_list",
+
+  // Other API routes can be added here
+  // EXAMPLE_DATA: "/api/example",
+};
+
+/**
+ * Helper function to construct full API URLs.
+ * @param routeKey A key from API_ROUTES
+ * @returns The full URL for the API endpoint.
+ */
+export function getApiUrl(routeKey: keyof typeof API_ROUTES): string {
+  if (!API_BASE_URL) {
+    const errorMessage = `VITE_API_BASE_URL is not configured or not available on the client. Cannot construct API URL for "${String(routeKey)}". Check your .env file and Vite/Remix configuration.`;
+    console.error(errorMessage);
+    // Throwing an error here will stop the operation, which is usually desired
+    // if the base URL is essential for the API call.
+    throw new Error(errorMessage);
+  }
+  const path = API_ROUTES[routeKey];
+  if (!path) {
+    throw new Error(`API route for key "${String(routeKey)}" not found.`);
+  }
+  return `${API_BASE_URL}${path}`;
+}--- app/lib/auth.server.ts ---
+// app/lib/auth.server.ts
+import { redirect } from "@remix-run/node";
+import { getApiUrl, API_ROUTES } from "./api.config"; // Changed import
+
+// --- Auth Status Types & Helpers ---
+export type AuthStatus =
+  | { status: "authenticated"; reason: "valid_access_token_and_session" | "valid_access_token" }
+  | { status: "login_required"; reason: "session_terminated" | "invalid_or_expired_tokens" | "no_tokens_present" }
+  | { status: "refresh_required"; reason: "valid_refresh_token" }
+  | { status: "error"; reason?: string };
+
+export function isAuthenticated(auth: AuthStatus): auth is Extract<AuthStatus, { status: "authenticated" }> {
+  return auth.status === "authenticated";
+}
+
+export function isRefreshable(auth: AuthStatus): auth is Extract<AuthStatus, { status: "refresh_required" }> {
+  return auth.status === "refresh_required";
+}
+
+// isLoginRequired is not strictly needed if isAuthenticated and isRefreshable are used, but can be kept for clarity
+// export function isLoginRequired(auth: AuthStatus) {
+//   return auth.status === "login_required";
+// }
+
+// --- Core Auth Functions ---
+
+export async function checkAuth(request: Request): Promise<AuthStatus> {
+  try {
+    const response = await fetch(getApiUrl("AUTH_CHECK"), { // Use getApiUrl
+      method: "GET",
+      headers: {
+        cookie: request.headers.get("cookie") ?? "",
+      },
+      credentials: "include",
+    });
+
+    if (!response.ok && response.headers.get("content-type")?.includes("application/json")) {
+      const data = await response.json();
+      if (data && data.status && data.reason) {
+        return data as AuthStatus;
+      }
+      return { status: "login_required", reason: data.message || `API error: ${response.status}` };
+    } else if (!response.ok) {
+      console.error("Auth check API request failed:", response.status, await response.text());
+      return { status: "error", reason: `API error: ${response.status}` };
+    }
+
+    const data = await response.json();
+    if (data && typeof data.status === 'string') {
+      return data as AuthStatus;
+    }
+    console.error("Auth check API response is not in expected AuthStatus format:", data);
+    return { status: "error", reason: "Invalid API response format from auth/check" };
+  } catch (error) {
+    console.error("Error during checkAuth:", error);
+    return { status: "error", reason: "Network error or failed to parse auth/check response" };
+  }
+}
+
+export async function refreshTokens(request: Request): Promise<{ ok: boolean; setCookieHeader?: string | null }> {
+  try {
+    const response = await fetch(getApiUrl("AUTH_REFRESH"), { // Use getApiUrl
+      method: "POST",
+      headers: {
+        cookie: request.headers.get("cookie") ?? "",
+      },
+      credentials: "include",
+    });
+
+    const setCookieHeader = response.headers.get("set-cookie");
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.warn("Refresh token request failed:", response.status, errorBody);
+      return { ok: false, setCookieHeader };
+    }
+
+    const data = await response.json();
+    if (data.status === "Success" || data.message?.includes("refreshed")) {
+      return { ok: true, setCookieHeader };
+    } else {
+      console.warn("Refresh token API call was not successful according to response body:", data);
+      return { ok: false, setCookieHeader };
+    }
+  } catch (error) {
+    console.error("Error during refreshTokens:", error);
+    return { ok: false };
+  }
+}
+
+export async function requireAuth(
+  request: Request,
+  redirectTo: string = "/login"
+): Promise<Extract<AuthStatus, { status: "authenticated" }>> {
+  let authStatus = await checkAuth(request);
+
+  if (isRefreshable(authStatus)) {
+    const { ok, setCookieHeader } = await refreshTokens(request);
+    if (ok && setCookieHeader) {
+      const currentUrl = new URL(request.url);
+      const destination = currentUrl.pathname + currentUrl.search;
+      console.log(`[requireAuth] Refresh successful, redirecting to ${destination} to apply new cookies.`);
+      throw redirect(destination, {
+        headers: { "Set-Cookie": setCookieHeader },
+      });
+    }
+    console.log("[requireAuth] Token refresh attempt failed or did not set cookies. Re-checking auth status.");
+    authStatus = await checkAuth(request);
+  }
+
+  if (!isAuthenticated(authStatus)) {
+    const currentPath = new URL(request.url).pathname;
+    const currentSearch = new URL(request.url).search;
+    // Only add 'next' if we are not already trying to go to the redirectTo page
+    // and if the current path is not the root (unless root itself needs a specific 'next')
+    const nextParam = (currentPath !== redirectTo && (currentPath !== "/" || currentSearch !== ""))
+      ? `?next=${encodeURIComponent(currentPath + currentSearch)}`
+      : "";
+    console.log(`[requireAuth] User not authenticated (status: ${authStatus.status}, reason: ${authStatus.reason}). Redirecting to ${redirectTo}${nextParam}.`);
+    throw redirect(`${redirectTo}${nextParam}`);
+  }
+  return authStatus; // Already narrowed by isAuthenticated
+}
+
+export { getApiUrl };
+--- app/hooks/use-mobile.tsx ---
+import * as React from "react"
+
+const MOBILE_BREAKPOINT = 768
+
+export function useIsMobile() {
+  const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined)
+
+  React.useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
+    const onChange = () => {
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
+    }
+    mql.addEventListener("change", onChange)
+    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
+    return () => mql.removeEventListener("change", onChange)
+  }, [])
+
+  return !!isMobile
+}
+--- app/root.tsx ---
+import {
+  Links,
+  Meta,
+  Outlet,
+  Scripts,
+  ScrollRestoration,
+} from "@remix-run/react";
+import type { LinksFunction } from "@remix-run/node";
+
+import "./tailwind.css";
+
+export const links: LinksFunction = () => [  
+  { rel: "preconnect", href: "https://fonts.googleapis.com" },  
+  { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },  
+  {  
+    rel: "stylesheet",  
+    href:  
+      "https://fonts.googleapis.com/css2?" +  
+      "family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&" +  
+      "family=Source+Serif+4:ital@0;1&" +  
+      "family=JetBrains+Mono:wght@400;700&" +  
+      "display=swap",  
+  },  
+];  
+
+export function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <Meta />
+        <Links />
+      </head>
+      <body>
+        {children}
+        <ScrollRestoration />
+        <Scripts />
+      </body>
+    </html>
+  );
+}
+
+export default function App() {
+  return <Outlet />;
+}
+--- app/routes/page.tsx ---
+// app/routes/some-route/page.tsx (or your page file)
+import { AppSidebar } from "~/components/app-sidebar"; // Adjusted path
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "~/components/ui/breadcrumb";
+import { Separator } from "~/components/ui/separator";
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "~/components/ui/sidebar"; // Assuming these are your UI primitives
+
+export default function Page() {
+  return (
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset>
+        <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background">
+          {/* ^-- Use theme variables for border and background */}
+          <div className="flex items-center gap-2 px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 h-4 bg-border" /> {/* Theme variable for separator */}
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem className="hidden md:block">
+                  <BreadcrumbLink href="#" className="text-foreground hover:text-primary">
+                    Building Your Application
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator className="hidden md:block text-muted-foreground" />
+                <BreadcrumbItem>
+                  <BreadcrumbPage className="text-foreground">Data Fetching</BreadcrumbPage>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+          </div>
+        </header>
+        <div className="flex flex-1 flex-col gap-4 p-4 pt-2"> {/* Adjusted pt-0 to pt-2 for some spacing */}
+          <div className="grid auto-rows-min gap-4 md:grid-cols-3">
+            <div className="aspect-video rounded-xl bg-muted/50" />
+            <div className="aspect-video rounded-xl bg-muted/50" />
+            <div className="aspect-video rounded-xl bg-muted/50" />
+          </div>
+          <div className="min-h-[100vh] flex-1 rounded-xl bg-muted/50 md:min-h-min" />
+        </div>
+      </SidebarInset>
+    </SidebarProvider>
+  );
+}--- app/routes/sample.tsx ---
+import type { MetaFunction } from "@remix-run/node";
+import { useState } from "react"; // Need useState for Dialog
+
+// Import required shadcn/ui components
+// Adjust import paths if your setup is different
+import { Button } from "~/components/ui/button";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "~/components/ui/card";
+import { Input } from "~/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from "~/components/ui/dialog";
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "~/components/ui/accordion";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "~/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "~/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "~/components/ui/tooltip"; // Requires TooltipProvider wrapper
+import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
+import { Badge } from "~/components/ui/badge";
+import { Separator } from "~/components/ui/separator"; // Good for spacing/visual break
+import { Label } from "~/components/ui/label"; // Useful with inputs/forms
+
+// Example icon - install lucide-react if not already
+import { Info } from "lucide-react";
+
+
+export const meta: MetaFunction = () => {
+  return [
+    { title: "Remix + Shadcn Theme Showcase" },
+    { name: "description", content: "Demonstrating shadcn components with a custom theme in Remix." },
+  ];
+};
+
+export default function ThemeShowcase() {
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  return (
+    // Basic container for layout. Applies background/text color from _root.tsx/globals.css
+    <main className="container mx-auto py-8 px-4 font-sans"> {/* Using font-sans from your theme */}
+
+      {/* === Title Section === */}
+      <h1 className="text-4xl font-bold text-center mb-8">Remix + shadcn/ui Theme Showcase</h1>
+      <p className="text-center text-muted-foreground mb-12">
+        This page displays various shadcn/ui components using the custom theme defined in your CSS file.
+        <br/> (Designed primarily for Light Mode based on the provided CSS root variables)
+      </p>
+
+      {/* === Typography & Colors Showcase === */}
+      <section className="mb-12">
+          <h2 className="text-2xl font-semibold mb-4">Typography & Colors</h2>
+          {/* Colors are applied via tailwind classes based on your CSS variables */}
+          <div className="grid gap-4 mb-6">
+              <p className="text-foreground">Default Foreground text.</p>
+              <p className="text-primary">Primary text color.</p>
+              <p className="text-secondary-foreground bg-secondary p-2 rounded">Secondary text on Secondary background.</p>
+              <p className="text-muted-foreground bg-muted p-2 rounded">Muted text on Muted background.</p>
+              <p className="text-accent-foreground bg-accent p-2 rounded">Accent text on Accent background.</p>
+              <p className="text-destructive-foreground bg-destructive p-2 rounded">Destructive text on Destructive background.</p>
+          </div>
+          <h3 className="text-xl font-semibold mb-2">Fonts</h3>
+          {/* Font faces are applied via tailwind classes based on your CSS variables */}
+          <div className="grid gap-2">
+              <p className="font-sans">This is text using the Sans-serif font (Plus Jakarta Sans).</p>
+              <p className="font-serif">This is text using the Serif font (Lora).</p>
+              <p className="font-mono">This is text using the Monospace font (Roboto Mono).</p>
+          </div>
+      </section>
+
+      <Separator className="my-8" /> {/* Visual separator */}
+
+      {/* === Buttons Section === */}
+      <section className="mb-12">
+        <h2 className="text-2xl font-semibold mb-4">Buttons</h2>
+        <div className="flex flex-wrap gap-4">
+          <Button>Primary (Default)</Button>
+          <Button variant="secondary">Secondary</Button>
+          <Button variant="outline">Outline</Button>
+          <Button variant="ghost">Ghost</Button>
+          <Button variant="destructive">Destructive</Button>
+          <Button variant="link">Link</Button>
+          <Button disabled>Disabled</Button>
+          <Button>
+            <Info className="mr-2 h-4 w-4" />
+            With Icon
+          </Button>
+        </div>
+      </section>
+
+       <Separator className="my-8" />
+
+      {/* === Cards Section === */}
+      <section className="mb-12">
+        <h2 className="text-2xl font-semibold mb-4">Card</h2>
+        <Card className="w-[350px]"> {/* Example fixed width */}
+          <CardHeader>
+            <CardTitle>Card Title</CardTitle>
+            <CardDescription>Card description providing context or summary.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p>This is the main content area within the card body.</p>
+            <p className="mt-2 text-sm text-muted-foreground">More text, perhaps smaller.</p>
+          </CardContent>
+          <CardFooter className="flex justify-between">
+            <Button variant="outline">Cancel</Button>
+            <Button>Deploy</Button>
+          </CardFooter>
+        </Card>
+      </section>
+
+      <Separator className="my-8" />
+
+      {/* === Inputs & Selects Section === */}
+      <section className="mb-12">
+        <h2 className="text-2xl font-semibold mb-4">Inputs & Selects</h2>
+        <div className="grid w-full max-w-sm items-center gap-4">
+            <div className="grid gap-1.5">
+                 <Label htmlFor="email">Your Email</Label>
+                 <Input type="email" id="email" placeholder="Email" />
+            </div>
+            <div className="grid gap-1.5">
+                <Label htmlFor="status">Status</Label>
+                 <Select>
+                    <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="Select a status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="active">Active</SelectItem>
+                        <SelectItem value="inactive">Inactive</SelectItem>
+                        <SelectItem value="pending">Pending</SelectItem>
+                    </SelectContent>
+                 </Select>
+             </div>
+        </div>
+      </section>
+
+      <Separator className="my-8" />
+
+      {/* === Dialog Section === */}
+      <section className="mb-12">
+        <h2 className="text-2xl font-semibold mb-4">Dialog</h2>
+        {/* Dialog requires state to control its open/close state */}
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger asChild>
+                <Button variant="outline">Open Dialog</Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[425px]"> {/* sm:max-w is a common pattern */}
+                <DialogHeader>
+                <DialogTitle>Edit profile</DialogTitle>
+                <DialogDescription>
+                    Make changes to your profile here. Click save when you're done.
+                </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="name" className="text-right">
+                    Name
+                    </Label>
+                    <Input id="name" defaultValue="Pedro Duarte" className="col-span-3" />
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="username" className="text-right">
+                    Username
+                    </Label>
+                    <Input id="username" defaultValue="@peduarte" className="col-span-3" />
+                </div>
+                </div>
+                <DialogFooter>
+                 {/* Close button needs DialogClose or onOpenChange={} */}
+                 <DialogClose asChild>
+                    <Button type="button" variant="secondary">Close</Button>
+                 </DialogClose>
+                <Button type="submit">Save changes</Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+      </section>
+
+      <Separator className="my-8" />
+
+      {/* === Accordion Section === */}
+      <section className="mb-12">
+        <h2 className="text-2xl font-semibold mb-4">Accordion</h2>
+        <Accordion type="single" collapsible className="w-full max-w-md"> {/* Example width */}
+             <AccordionItem value="item-1">
+                 <AccordionTrigger>Is it accessible?</AccordionTrigger>
+                 <AccordionContent>
+                     Yes. It adheres to the WAI-ARIA design pattern.
+                 </AccordionContent>
+             </AccordionItem>
+             <AccordionItem value="item-2">
+                 <AccordionTrigger>Is it styled?</AccordionTrigger>
+                 <AccordionContent>
+                     Yes. Comes with default styles that you can override.
+                 </AccordionContent>
+             </AccordionItem>
+             <AccordionItem value="item-3">
+                 <AccordionTrigger>Is it animated?</AccordionTrigger>
+                 <AccordionContent>
+                     Yes. It's animated by default, but you can disable it.
+                 </AccordionContent>
+             </AccordionItem>
+         </Accordion>
+      </section>
+
+      <Separator className="my-8" />
+
+       {/* === Tabs Section === */}
+      <section className="mb-12">
+        <h2 className="text-2xl font-semibold mb-4">Tabs</h2>
+        <Tabs defaultValue="account" className="w-full max-w-md"> {/* Example width */}
+            <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="account">Account</TabsTrigger>
+                <TabsTrigger value="password">Password</TabsTrigger>
+            </TabsList>
+            <TabsContent value="account" className="mt-4">
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Account</CardTitle>
+                        <CardDescription>
+                        Make changes to your account here. Click save when you're done.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                        {/* Your form content for account */}
+                         <div className="grid gap-1.5">
+                             <Label htmlFor="name">Name</Label>
+                             <Input id="name" defaultValue="Example User" />
+                         </div>
+                    </CardContent>
+                    <CardFooter>
+                        <Button>Save changes</Button>
+                    </CardFooter>
+                </Card>
+            </TabsContent>
+            <TabsContent value="password" className="mt-4">
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Password</CardTitle>
+                        <CardDescription>
+                        Change your password here. After saving, you'll be logged out.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                       {/* Your form content for password */}
+                       <div className="grid gap-1.5">
+                             <Label htmlFor="current">Current password</Label>
+                             <Input id="current" type="password" />
+                         </div>
+                         <div className="grid gap-1.5">
+                             <Label htmlFor="new">New password</Label>
+                             <Input id="new" type="password" />
+                         </div>
+                    </CardContent>
+                    <CardFooter>
+                        <Button>Save password</Button>
+                    </CardFooter>
+                </Card>
+            </TabsContent>
+        </Tabs>
+      </section>
+
+      <Separator className="my-8" />
+
+      {/* === Popover Section === */}
+      <section className="mb-12">
+         <h2 className="text-2xl font-semibold mb-4">Popover</h2>
+         <Popover>
+              <PopoverTrigger asChild>
+                  <Button variant="outline">Open Popover</Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80"> {/* Example width */}
+                  <div className="grid gap-4">
+                      <div className="space-y-2">
+                          <h4 className="font-medium leading-none">Dimensions</h4>
+                          <p className="text-sm text-muted-foreground">Set the dimensions for the layer.</p>
+                      </div>
+                      <div className="grid gap-2">
+                          <div className="grid grid-cols-3 items-center gap-4">
+                              <Label htmlFor="width">Width</Label>
+                              <Input id="width" defaultValue="100%" className="col-span-2 h-8" />
+                          </div>
+                          <div className="grid grid-cols-3 items-center gap-4">
+                              <Label htmlFor="maxWidth">Max. width</Label>
+                              <Input id="maxWidth" defaultValue="300px" className="col-span-2 h-8" />
+                          </div>
+                          <div className="grid grid-cols-3 items-center gap-4">
+                              <Label htmlFor="height">Height</Label>
+                              <Input id="height" defaultValue="25px" className="col-span-2 h-8" />
+                          </div>
+                          <div className="grid grid-cols-3 items-center gap-4">
+                              <Label htmlFor="maxHeight">Max. height</Label>
+                              <Input id="maxHeight" defaultValue="not set" className="col-span-2 h-8" />
+                          </div>
+                      </div>
+                  </div>
+              </PopoverContent>
+          </Popover>
+      </section>
+
+      <Separator className="my-8" />
+
+      {/* === Tooltip Section === */}
+      <section className="mb-12">
+          <h2 className="text-2xl font-semibold mb-4">Tooltip (Hover over button)</h2>
+          {/* Tooltip requires a Provider wrapper */}
+          <TooltipProvider>
+              <Tooltip>
+                  <TooltipTrigger asChild>
+                      <Button variant="outline">Hover Me</Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                      <p>This is a helpful tooltip!</p>
+                  </TooltipContent>
+              </Tooltip>
+          </TooltipProvider>
+      </section>
+
+       <Separator className="my-8" />
+
+      {/* === Alert Section === */}
+      <section className="mb-12">
+        <h2 className="text-2xl font-semibold mb-4">Alert</h2>
+        <Alert className="max-w-lg"> {/* Example width */}
+            <Info className="h-4 w-4" /> {/* Example icon */}
+            <AlertTitle>Heads up!</AlertTitle>
+            <AlertDescription>
+                You can add components and dependencies to your app using the shadcn/ui cli.
+            </AlertDescription>
+        </Alert>
+      </section>
+
+      <Separator className="my-8" />
+
+      {/* === Badges Section === */}
+       <section className="mb-12">
+           <h2 className="text-2xl font-semibold mb-4">Badges</h2>
+           <div className="flex flex-wrap gap-2">
+               <Badge>Default</Badge>
+               <Badge variant="secondary">Secondary</Badge>
+               <Badge variant="outline">Outline</Badge>
+               <Badge variant="destructive">Destructive</Badge>
+               <Badge className="bg-primary text-primary-foreground hover:bg-primary/80">Custom Badge Color</Badge> {/* Example applying theme colors directly */}
+           </div>
+       </section>
+
+      {/* ... Add more components here as needed ... */}
+
+    </main>
+  );
+}
+--- app/routes/login.tsx ---
+// app/routes/login.tsx
+import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
+import { useLoaderData, useSearchParams } from "@remix-run/react";
+import { FaGoogle } from "react-icons/fa";
+
+import { Button } from "~/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "~/components/ui/card";
+import {
+  checkAuth,
+  refreshTokens,
+  isAuthenticated,
+  isRefreshable,
+  getApiUrl, // AuthStatus also exported from auth.server
+  type AuthStatus,
+} from "~/lib/auth.server";
+import { useIsMobile } from "~/hooks/use-mobile";
+
+export const meta: MetaFunction = () => {
+  return [{ title: "Sign In" }];
+};
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url);
+  const responseHeaders = new Headers();
+
+  let authStatus = await checkAuth(request);
+
+  // 1. Handle refresh if needed
+  if (isRefreshable(authStatus)) {
+    console.log("[Login Loader] Token refresh required. Attempting refresh...");
+    const { ok, setCookieHeader } = await refreshTokens(request);
+    if (ok && setCookieHeader) {
+      responseHeaders.append("Set-Cookie", setCookieHeader);
+      // Important: After refresh, re-check auth. The most reliable way is to redirect
+      // to allow the browser to send the new cookies.
+      // Redirect to the login page itself (or the intended 'next' page if already known to be safe).
+      const destination = url.pathname + url.search; // Preserve current query params
+      console.log(`[Login Loader] Refresh successful. Redirecting to ${destination} to apply new cookies.`);
+      throw redirect(destination, { headers: responseHeaders });
+    }
+    // If refresh failed, get the new auth status
+    authStatus = await checkAuth(request);
+    console.log("[Login Loader] Refresh failed or no cookies set. New auth status:", authStatus.status);
+  }
+
+  // 2. If authenticated, redirect away from login page
+  if (isAuthenticated(authStatus)) {
+    const next = url.searchParams.get("next") || "/"; // Default to homepage
+    console.log(`[Login Loader] User already authenticated. Redirecting to: ${next}`);
+    // Pass along any Set-Cookie headers if a refresh attempt happened but didn't immediately lead to this block.
+    throw redirect(next, { headers: responseHeaders });
+  }
+
+  // 3. If not authenticated and not refreshable, user needs to log in.
+  //    Pass authStatus to the component for potential error messages.
+  return json({ authStatus }, { headers: responseHeaders });
+}
+
+export default function LoginPage() {
+  const { authStatus } = useLoaderData<typeof loader>();
+  const [searchParams] = useSearchParams();
+  const isMobile = useIsMobile(); // Correctly using the hook
+
+  // Your backend at GOOGLE_LOGIN should handle any 'next' or 'redirect_uri' logic
+  // to bring the user back to the correct frontend page after Google OAuth.
+  // This URL is just to initiate the flow with your backend.
+  const googleLoginUrl = getApiUrl("GOOGLE_LOGIN");
+  const nextParam = searchParams.get("next");
+
+  // If your backend needs the frontend's 'next' target, append it.
+  // Example: `${googleLoginUrl}?frontend_redirect_after_login=${encodeURIComponent(nextParam)}`
+  // Adjust query parameter name as per your backend's expectation.
+  const finalGoogleLoginUrl = nextParam
+    ? `${googleLoginUrl}?final_redirect_path=${encodeURIComponent(nextParam)}`
+    : googleLoginUrl;
+
+
+  let displayMessage = searchParams.get("message"); // General message from redirects
+  let errorReason = searchParams.get("error_description") || searchParams.get("error");
+
+
+  if (!displayMessage && !errorReason && authStatus) {
+    if (authStatus.status === "login_required") {
+      switch (authStatus.reason) {
+        case "session_terminated":
+          errorReason = "Your session has been terminated. Please sign in again.";
+          break;
+        case "invalid_or_expired_tokens":
+          errorReason = "Your session is invalid or has expired. Please sign in again.";
+          break;
+        // "no_tokens_present" is normal for login page, so no specific message unless you want one.
+      }
+    } else if (authStatus.status === "error" && authStatus.reason) {
+      errorReason = authStatus.reason;
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
+      <Card className="w-full max-w-md shadow-xl">
+        <CardHeader className="text-center">
+          <CardTitle className="text-3xl font-bold tracking-tight text-primary">
+            Access Your Account
+          </CardTitle>
+          <CardDescription className="text-muted-foreground pt-2">
+            Continue with Google to securely sign in.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6 pt-6">
+          {errorReason && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">
+              <p>{errorReason}</p>
+            </div>
+          )}
+          {displayMessage && !errorReason && (
+             <div className="rounded-md border border-primary/50 bg-primary/10 p-3 text-center text-sm text-primary">
+              <p>{displayMessage}</p>
+            </div>
+          )}
+          <Button
+            asChild
+            size={isMobile ? "lg" : "lg"} // Using lg for better touch target
+            className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-lg py-6"
+          >
+            <a href={finalGoogleLoginUrl} className="flex items-center justify-center gap-3">
+              <FaGoogle className="h-5 w-5" />
+              Sign in with Google
+            </a>
+          </Button>
+        </CardContent>
+        <CardFooter className="flex-col items-center text-center pt-6">
+          <p className="text-xs text-muted-foreground">
+            By proceeding, you agree to our Terms of Service and Privacy Policy.
+          </p>
+        </CardFooter>
+      </Card>
+    </div>
+  );
+}--- app/routes/_index.tsx ---
+import type { MetaFunction } from "@remix-run/node";
+
+export const meta: MetaFunction = () => {
+  return [
+    { title: "New Remix App" },
+    { name: "description", content: "Welcome to Remix!" },
+  ];
+};
+
+export default function Index() {
+  return (
+    <div className="flex h-screen items-center justify-center">
+      <div className="flex flex-col items-center gap-16">
+        <header className="flex flex-col items-center gap-9">
+          <h1 className="leading text-2xl font-bold text-gray-800 dark:text-gray-100">
+            Welcome to <span className="sr-only">Remix</span>
+          </h1>
+          <div className="h-[144px] w-[434px]">
+            <img
+              src="/logo-light.png"
+              alt="Remix"
+              className="block w-full dark:hidden"
+            />
+            <img
+              src="/logo-dark.png"
+              alt="Remix"
+              className="hidden w-full dark:block"
+            />
+          </div>
+        </header>
+        <nav className="flex flex-col items-center justify-center gap-4 rounded-3xl border border-gray-200 p-6 dark:border-gray-700">
+          <p className="leading-6 text-gray-700 dark:text-gray-200">
+            What&apos;s next?
+          </p>
+          <ul>
+            {resources.map(({ href, text, icon }) => (
+              <li key={href}>
+                <a
+                  className="group flex items-center gap-3 self-stretch p-3 leading-normal text-blue-700 hover:underline dark:text-blue-500"
+                  href={href}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {icon}
+                  {text}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      </div>
+    </div>
+  );
+}
+
+const resources = [
+  {
+    href: "https://remix.run/start/quickstart",
+    text: "Quick Start (5 min)",
+    icon: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="20"
+        viewBox="0 0 20 20"
+        fill="none"
+        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
+      >
+        <path
+          d="M8.51851 12.0741L7.92592 18L15.6296 9.7037L11.4815 7.33333L12.0741 2L4.37036 10.2963L8.51851 12.0741Z"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    ),
+  },
+  {
+    href: "https://remix.run/start/tutorial",
+    text: "Tutorial (30 min)",
+    icon: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="20"
+        viewBox="0 0 20 20"
+        fill="none"
+        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
+      >
+        <path
+          d="M4.561 12.749L3.15503 14.1549M3.00811 8.99944H1.01978M3.15503 3.84489L4.561 5.2508M8.3107 1.70923L8.3107 3.69749M13.4655 3.84489L12.0595 5.2508M18.1868 17.0974L16.635 18.6491C16.4636 18.8205 16.1858 18.8205 16.0144 18.6491L13.568 16.2028C13.383 16.0178 13.0784 16.0347 12.915 16.239L11.2697 18.2956C11.047 18.5739 10.6029 18.4847 10.505 18.142L7.85215 8.85711C7.75756 8.52603 8.06365 8.21994 8.39472 8.31453L17.6796 10.9673C18.0223 11.0653 18.1115 11.5094 17.8332 11.7321L15.7766 13.3773C15.5723 13.5408 15.5554 13.8454 15.7404 14.0304L18.1868 16.4767C18.3582 16.6481 18.3582 16.926 18.1868 17.0974Z"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    ),
+  },
+  {
+    href: "https://remix.run/docs",
+    text: "Remix Docs",
+    icon: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="20"
+        viewBox="0 0 20 20"
+        fill="none"
+        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
+      >
+        <path
+          d="M9.99981 10.0751V9.99992M17.4688 17.4688C15.889 19.0485 11.2645 16.9853 7.13958 12.8604C3.01467 8.73546 0.951405 4.11091 2.53116 2.53116C4.11091 0.951405 8.73546 3.01467 12.8604 7.13958C16.9853 11.2645 19.0485 15.889 17.4688 17.4688ZM2.53132 17.4688C0.951566 15.8891 3.01483 11.2645 7.13974 7.13963C11.2647 3.01471 15.8892 0.951453 17.469 2.53121C19.0487 4.11096 16.9854 8.73551 12.8605 12.8604C8.73562 16.9853 4.11107 19.0486 2.53132 17.4688Z"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
+  {
+    href: "https://rmx.as/discord",
+    text: "Join Discord",
+    icon: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="20"
+        viewBox="0 0 24 20"
+        fill="none"
+        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
+      >
+        <path
+          d="M15.0686 1.25995L14.5477 1.17423L14.2913 1.63578C14.1754 1.84439 14.0545 2.08275 13.9422 2.31963C12.6461 2.16488 11.3406 2.16505 10.0445 2.32014C9.92822 2.08178 9.80478 1.84975 9.67412 1.62413L9.41449 1.17584L8.90333 1.25995C7.33547 1.51794 5.80717 1.99419 4.37748 2.66939L4.19 2.75793L4.07461 2.93019C1.23864 7.16437 0.46302 11.3053 0.838165 15.3924L0.868838 15.7266L1.13844 15.9264C2.81818 17.1714 4.68053 18.1233 6.68582 18.719L7.18892 18.8684L7.50166 18.4469C7.96179 17.8268 8.36504 17.1824 8.709 16.4944L8.71099 16.4904C10.8645 17.0471 13.128 17.0485 15.2821 16.4947C15.6261 17.1826 16.0293 17.8269 16.4892 18.4469L16.805 18.8725L17.3116 18.717C19.3056 18.105 21.1876 17.1751 22.8559 15.9238L23.1224 15.724L23.1528 15.3923C23.5873 10.6524 22.3579 6.53306 19.8947 2.90714L19.7759 2.73227L19.5833 2.64518C18.1437 1.99439 16.6386 1.51826 15.0686 1.25995ZM16.6074 10.7755L16.6074 10.7756C16.5934 11.6409 16.0212 12.1444 15.4783 12.1444C14.9297 12.1444 14.3493 11.6173 14.3493 10.7877C14.3493 9.94885 14.9378 9.41192 15.4783 9.41192C16.0471 9.41192 16.6209 9.93851 16.6074 10.7755ZM8.49373 12.1444C7.94513 12.1444 7.36471 11.6173 7.36471 10.7877C7.36471 9.94885 7.95323 9.41192 8.49373 9.41192C9.06038 9.41192 9.63892 9.93712 9.6417 10.7815C9.62517 11.6239 9.05462 12.1444 8.49373 12.1444Z"
+          strokeWidth="1.5"
+        />
+      </svg>
+    ),
+  },
+];
+--- app/entry.client.tsx ---
+/**
+ * By default, Remix will handle hydrating your app on the client for you.
+ * You are free to delete this file if you'd like to, but if you ever want it revealed again, you can run `npx remix reveal` ✨
+ * For more information, see https://remix.run/file-conventions/entry.client
+ */
+
+import { RemixBrowser } from "@remix-run/react";
+import { startTransition, StrictMode } from "react";
+import { hydrateRoot } from "react-dom/client";
+
+startTransition(() => {
+  hydrateRoot(
+    document,
+    <StrictMode>
+      <RemixBrowser />
+    </StrictMode>
+  );
+});
+--- app/components/sidebar-nav.tsx ---
+// /app/components/sidebar-nav.tsx
+
+import * as React from "react";
+import { ChevronRight, type LucideIcon as LucideIconType } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
+import { Button } from "~/components/ui/button";
+import { Separator } from "~/components/ui/separator";
+import { cn } from "~/lib/utils";
+// import { getApiUrl } from "~/lib/api.config"; // Temporarily commented out for direct URL usage below
+
+type LucideIcon = LucideIconType;
+
+// --- Types ---
+interface NavSubItem {
+  id: string;
+  title: string;
+  href: string;
+  isActive?: boolean;
+}
+
+interface NavItem {
+  id: string;
+  title: string;
+  href?: string;
+  icon?: LucideIcon;
+  isActive?: boolean;
+  subItems?: NavSubItem[];
+  isGroupLabel?: boolean;
+  chatId?: string;
+  onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+}
+
+interface SidebarNavProps {
+  mainNav: NavItem[];
+}
+
+interface ApiChatSession {
+  chatId: string;
+  title: string;
+  createdAt: string;
+  lastMessageAt: string;
+}
+
+// --- Utility ---
+
+const getStartOfDay = (date: Date): Date => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[] => {
+  const navItems: NavItem[] = [];
+  if (!Array.isArray(chatSessions) || chatSessions.length === 0) return navItems;
+
+  const now = new Date();
+  const todayStart = getStartOfDay(now);
+  const yesterdayStart = new Date(todayStart);
+  yesterdayStart.setDate(todayStart.getDate() - 1);
+  const sevenDaysAgoStart = new Date(todayStart);
+  sevenDaysAgoStart.setDate(todayStart.getDate() - 7);
+  const thirtyDaysAgoStart = new Date(todayStart);
+  thirtyDaysAgoStart.setDate(todayStart.getDate() - 30);
+
+  const sections: { [key: string]: ApiChatSession[] } = {
+    today: [],
+    yesterday: [],
+    prev7Days: [],
+    prev30Days: [],
+  };
+
+  // Ensure sessions are sorted by lastMessageAt descending if not already from API
+  // For example: chatSessions.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
+
+  chatSessions.forEach(session => {
+    const sessionDate = new Date(session.lastMessageAt);
+    if (sessionDate >= todayStart)      sections.today.push(session);
+    else if (sessionDate >= yesterdayStart) sections.yesterday.push(session);
+    else if (sessionDate >= sevenDaysAgoStart) sections.prev7Days.push(session);
+    else if (sessionDate >= thirtyDaysAgoStart) sections.prev30Days.push(session);
+  });
+
+  const createChatNavItem = (session: ApiChatSession): NavItem => ({
+    id: `chat-${session.chatId}`,
+    title: session.title.length > 30 ? session.title.substring(0, 27) + "..." : session.title,
+    href: `/chat/${session.chatId}`, // This href can be used by Remix's <Link> component
+    chatId: session.chatId,
+    onClick: (e) => {
+      e.preventDefault();
+      // For Remix, prefer client-side navigation using <Link to={...}> or useNavigate()
+      // to avoid full page reloads.
+      // Example: navigate(`/chat/${session.chatId}`);
+      // For now, using window.location.href as per existing structure:
+      window.location.href = `/chat/${session.chatId}`;
+    },
+  });
+
+  if (sections.today.length > 0) {
+    navItems.push({ id: 'ch-label-today', title: 'Today', isGroupLabel: true });
+    sections.today.forEach(s => navItems.push(createChatNavItem(s)));
+  }
+  if (sections.yesterday.length > 0) {
+    navItems.push({ id: 'ch-label-yesterday', title: 'Yesterday', isGroupLabel: true });
+    sections.yesterday.forEach(s => navItems.push(createChatNavItem(s)));
+  }
+  if (sections.prev7Days.length > 0) {
+    navItems.push({ id: 'ch-label-prev7', title: 'Previous 7 days', isGroupLabel: true });
+    sections.prev7Days.forEach(s => navItems.push(createChatNavItem(s)));
+  }
+  if (sections.prev30Days.length > 0) {
+    navItems.push({ id: 'ch-label-prev30', title: 'Previous 30 days', isGroupLabel: true });
+    sections.prev30Days.forEach(s => navItems.push(createChatNavItem(s)));
+  }
+
+  return navItems;
+};
+
+// --- NavItemDisplay ---
+
+const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item, isSubItem = false }) => {
+  const [isOpen, setIsOpen] = React.useState(item.isActive ?? false);
+
+  if (item.isGroupLabel) {
+    return <div className="px-3 pt-4 pb-1.5 text-[0.8125rem] font-semibold text-sidebar-foreground">
+      {item.title}
+    </div>;
+  }
+
+  // For simple links (including chat history items)
+  // If item.href is a Remix route, consider using <Link to={item.href} prefetch="intent">
+  // instead of <a href={...}> for client-side navigation.
+  if (!item.subItems || item.subItems.length === 0) {
+    return (
+      <Button
+        variant="ghost"
+        asChild
+        className={cn(
+          "w-full justify-start items-center gap-2.5 h-auto px-3 py-1.5 text-[0.8125rem] font-medium",
+          isSubItem && "pl-9 pr-3 py-1.5 text-xs", // Indent sub-items
+          item.isActive
+            ? "bg-sidebar-accent text-sidebar-accent-foreground" // Active state
+            : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground", // Default and hover
+          "transition-colors rounded-md"
+        )}
+        title={item.title} // Show full title on hover
+      >
+        <a href={item.href || "#"} onClick={item.onClick}>
+          {item.icon && <item.icon className={cn("size-4 shrink-0", isSubItem && "size-3.5")} />}
+          <span className="truncate flex-1">{item.title}</span>
+        </a>
+      </Button>
+    );
+  }
+
+  // For collapsible items
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="w-full">
+      <div className="flex items-center">
+        <Button
+          variant="ghost"
+          asChild
+          className={cn(
+            "w-full justify-start items-center gap-2.5 h-auto px-3 py-1.5 text-[0.8125rem] font-medium flex-1",
+            item.isActive && !isOpen // Active but closed
+              ? "bg-sidebar-accent/70 text-sidebar-accent-foreground"
+              : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+            "transition-colors rounded-md"
+          )}
+          title={item.title}
+        >
+          <a
+            href={item.href || "#"}
+            onClick={(e) => {
+              if (item.subItems && item.subItems.length > 0) {
+                e.preventDefault(); // Prevent navigation if it's a collapsible trigger
+                setIsOpen(!isOpen);
+              } else if (item.onClick) {
+                item.onClick(e); // Call custom onClick if provided (e.g., for chat items)
+              }
+            }}
+          >
+            {item.icon && <item.icon className="size-4 shrink-0" />}
+            <span className="truncate flex-1">{item.title}</span>
+          </a>
+        </Button>
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" size="icon" className="ml-1 size-7 shrink-0">
+            <ChevronRight className={cn("size-3.5 transition-transform text-sidebar-foreground/60", isOpen && "rotate-90")} />
+            <span className="sr-only">Toggle {item.title}</span>
+          </Button>
+        </CollapsibleTrigger>
+      </div>
+      <CollapsibleContent className="pl-3.5 mt-0.5 space-y-0.5"> {/* Indent sub-items */}
+        {item.subItems.map((subItem) => (
+          <NavItemDisplay
+            key={subItem.id}
+            item={{ ...subItem, icon: (subItem as any).icon || (() => null) }} // Pass empty icon for subitems if not defined
+            isSubItem
+          />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+};
+
+// --- SidebarNav (Main) ---
+
+export function SidebarNav({ mainNav }: SidebarNavProps) {
+  const [chatHistoryNavItems, setChatHistoryNavItems] = React.useState<NavItem[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = React.useState(true);
+  const [errorHistory, setErrorHistory] = React.useState<string | null>(null);
+
+  const refreshChatHistory = React.useCallback(async () => {
+    setIsLoadingHistory(true);
+    setErrorHistory(null);
+    console.log("[SidebarNav] Refreshing chat history…");
+
+    try {
+      // Using direct URL as requested for now:
+      const apiUrl = "https://api-chat.kwikon.club/api/chat/session_list";
+      // When ready, switch back to:
+      // const apiUrl = getApiUrl("CHAT_SESSION_LIST");
+      console.log("[SidebarNav] Fetch URL:", apiUrl);
+
+      const response = await fetch(apiUrl, {
+        credentials: "include", // Essential for HttpOnly cookies
+        headers: {
+          "Accept": "application/json" // Good practice to specify expected response type
+        }
+      });
+      console.log("[SidebarNav] Status:", response.status, response.statusText);
+
+      if (!response.ok) {
+        let errorData: string = `Raw response: ${response.status} ${response.statusText}`;
+        try {
+          if (response.headers.get("content-type")?.includes("application/json")) {
+            const jsonData = await response.json();
+            errorData = JSON.stringify(jsonData);
+          } else {
+            errorData = await response.text();
+          }
+        } catch (parseErr) {
+          // console.warn("[SidebarNav] Could not parse error response body:", parseErr);
+          // errorData remains the raw status text if parsing fails
+        }
+        throw new Error(`API request failed: ${response.status} ${response.statusText}. Details: ${errorData}`);
+      }
+
+      const data: ApiChatSession[] = await response.json();
+      // console.log("[SidebarNav] Data received:", data);
+
+      const processedNavItems = processChatHistoryToNavItems(data);
+      setChatHistoryNavItems(processedNavItems);
+    } catch (err) {
+      // console.error("[SidebarNav] Failed to fetch/process chat history:", err);
+      setErrorHistory(err instanceof Error ? err.message : "An unknown error occurred fetching history.");
+      setChatHistoryNavItems([]); // Clear items on error
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    refreshChatHistory();
+  }, [refreshChatHistory]);
+
+  return (
+    <div className="flex flex-col h-full p-2 space-y-1"> {/* Main container for sidebar nav content */}
+      {/* Main Navigation Section */}
+      {mainNav.length > 0 && (
+        <nav className="space-y-0.5"> {/* Adjust gap with space-y-* */}
+          {mainNav.map((item) => <NavItemDisplay key={item.id} item={item} />)}
+        </nav>
+      )}
+
+      {/* Separator between main nav and chat history */}
+      {mainNav.length > 0 && (isLoadingHistory || chatHistoryNavItems.length > 0 || errorHistory) && (
+        <Separator className="my-2 bg-border/60" />
+      )}
+
+      {/* Chat History Title */}
+      <div className="px-1 pt-1 pb-1 text-base font-semibold text-sidebar-foreground">
+        Chat History
+      </div>
+
+      {/* Chat History Section (Scrollable) */}
+      <div className="flex-1 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
+        {isLoadingHistory ? (
+          <div className="px-3 py-2 text-sm text-sidebar-foreground/70 text-center">
+            Loading history…
+          </div>
+        ) : errorHistory ? (
+          <div className="px-3 py-2 text-sm text-destructive text-center break-words">
+            Error fetching history.<br />
+            <span className="text-xs text-muted-foreground">
+              {/* Show a snippet of the error */}
+              {errorHistory.substring(0, 200)}
+              {errorHistory.length > 200 ? "..." : ""}
+            </span>
+          </div>
+        ) : chatHistoryNavItems.length > 0 ? (
+          chatHistoryNavItems.map((item) => (
+            <NavItemDisplay key={item.id} item={item} />
+          ))
+        ) : (
+          <div className="px-3 py-2 text-xs text-sidebar-foreground/60 italic">
+            No chat history found.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}--- app/components/sidebar-account.tsx ---
+// components/sidebar-account.tsx
+"use client";
+
+import * as React from "react";
+import { LogOut, Settings2, User2, ChevronsUpDown, Palette } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "~/components/ui/popover"; // Assuming Popover or DropdownMenu
+import { Button } from "~/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar"; // Assuming Avatar component
+import { Separator } from "~/components/ui/separator";
+import { cn } from "~/lib/utils";
+// import { useTheme } from "next-themes"; // If you implement theme switching
+
+interface User {
+  name: string;
+  email: string;
+  avatar: string;
+}
+
+interface SidebarAccountProps {
+  user: User;
+}
+
+export function SidebarAccount({ user }: SidebarAccountProps) {
+  // const { theme, setTheme } = useTheme(); // Example for theme toggle
+
+  const getInitials = (name: string) => {
+    return name
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase();
+  };
+
+  return (
+    <div className="w-full p-3"> {/* Consistent padding */}
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            variant="ghost" // Use ghost for a less prominent but interactive trigger
+            className={cn(
+              "w-full flex items-center gap-3 px-3 py-2.5 h-auto text-left",
+              "text-sm font-medium rounded-md transition-colors",
+              "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar",
+              "data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+            )}
+            aria-label="Open user menu"
+          >
+            <Avatar className="size-8 rounded-md"> {/* Shadcn-like rounded-md avatar */}
+              <AvatarImage src={user.avatar} alt={user.name} />
+              <AvatarFallback className="rounded-md bg-sidebar-primary text-sidebar-primary-foreground text-xs">
+                {getInitials(user.name)}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 grid leading-tight">
+              <span className="font-semibold truncate text-sidebar-foreground">{user.name}</span>
+              <span className="text-xs truncate text-sidebar-foreground/70">{user.email}</span>
+            </div>
+            <ChevronsUpDown className="ml-auto size-4 text-sidebar-foreground/60 shrink-0" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end" // Align to the end of the trigger
+          side="top"    // Position popover above the button
+          sideOffset={8}
+          className="w-[calc(var(--radix-popover-trigger-width)+20px)] min-w-56 p-1.5 rounded-lg shadow-xl bg-popover text-popover-foreground border border-border"
+        >
+          {/* User Info in Popover Header */}
+          <div className="flex items-center gap-3 p-2.5 border-b border-border mb-1">
+            <Avatar className="size-9 rounded-md">
+              <AvatarImage src={user.avatar} alt={user.name} />
+              <AvatarFallback className="rounded-md bg-primary text-primary-foreground text-sm">
+                 {getInitials(user.name)}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 grid leading-tight">
+              <p className="text-sm font-semibold text-popover-foreground">{user.name}</p>
+              <p className="text-xs text-muted-foreground">{user.email}</p>
+            </div>
+          </div>
+
+          <nav className="flex flex-col gap-0.5">
+            <Button variant="ghost" className="w-full justify-start gap-2.5 px-2.5 py-2 text-sm h-auto font-normal text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md">
+              <User2 className="size-4 text-muted-foreground" /> My Profile
+            </Button>
+            <Button variant="ghost" className="w-full justify-start gap-2.5 px-2.5 py-2 text-sm h-auto font-normal text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md">
+              <Settings2 className="size-4 text-muted-foreground" /> Settings
+            </Button>
+            {/* Example Theme Toggle */}
+            {/*
+            <Button
+                variant="ghost"
+                onClick={() => setTheme(theme === "light" ? "dark" : "light")}
+                className="w-full justify-start gap-2.5 px-2.5 py-2 text-sm h-auto font-normal text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md"
+            >
+                <Palette className="size-4 text-muted-foreground" />
+                <span>Switch to {theme === "light" ? "Dark" : "Light"} Mode</span>
+            </Button>
+            */}
+            <Separator className="my-1 bg-border" />
+            <Button variant="ghost" className="w-full justify-start gap-2.5 px-2.5 py-2 text-sm h-auto font-normal text-destructive hover:bg-destructive/10 hover:text-destructive rounded-md">
+              <LogOut className="size-4" /> Logout
+            </Button>
+          </nav>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}--- app/components/sidebar-header.tsx ---
+// components/sidebar-header.tsx  
+"use client";  
+import * as React from "react";  
+import { Plus, type LucideIcon } from "lucide-react";  
+import { Button } from "~/components/ui/button";  
+import { cn } from "~/lib/utils";  
+  
+interface SidebarHeaderProps extends React.HTMLAttributes<HTMLDivElement> {  
+  appName: string;  
+  appIcon: LucideIcon;  
+  onNewChat?: () => void;  
+}  
+  
+export function SidebarHeader({  
+  className,  
+  appName,  
+  appIcon: AppIcon,  
+  onNewChat,  
+}: SidebarHeaderProps) {  
+  return (  
+    <div className={cn("flex flex-col gap-4 p-4", className)}>  
+      {/* Logo & App Name */}  
+      <a href="#" className="flex items-center gap-3">  
+        <span className="flex aspect-square size-9 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground transition-colors">  
+          <AppIcon className="size-5" />  
+        </span>  
+        <span className="font-semibold text-xl tracking-tight text-sidebar-foreground transition-colors">  
+          {appName}  
+        </span>  
+      </a>  
+      {/* + New Chat Button */}  
+      <Button  
+        variant="default"
+        size="sm"  
+        
+        className={cn(  
+          "w-full flex items-center justify-start gap-2 py-1.5 px-1",  
+          "text-sm font-medium rounded-md transition-colors",  
+          "bg-sidebar-primary text-sidebar-primary-foreground",  
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"  
+        )}  
+        onClick={onNewChat}  
+      >  
+        <Plus className="size-4" />  
+        <span>New Chat</span>  
+      </Button>  
+    </div>  
+  );  
+}  --- app/components/app-sidebar.tsx ---
+// components/app-sidebar.tsx
+"use client"; // If any child components use client-side hooks
+
+import * as React from "react";
+import { SidebarHeader as CustomSidebarHeader } from "./sidebar-header";
+import { SidebarAccount } from "./sidebar-account";
+import { SidebarNav } from "./sidebar-nav";
+import {
+  Sidebar,
+  SidebarContent, // Primitive from your UI kit
+  SidebarFooter,   // Primitive from your UI kit
+  SidebarHeader,   // Primitive from your UI kit
+  // SidebarRail, // Assuming this is still part of your setup if needed
+} from "~/components/ui/sidebar"; // Adjusted path
+import { cn } from "~/lib/utils"; // Adjusted path
+import { Command } from "lucide-react"; // For the logo
+
+// Example data structure inspired by Shadcn's, to be passed down
+// You might fetch this or define it more centrally
+const sidebarData = {
+  appName: "Krivi AI",
+  user: {
+    name: "User Name", // Replace with actual user data
+    email: "user@example.com",
+    avatar: "/avatars/default.png", // Provide a default or user-specific avatar
+  },
+   mainNav: [], // <--- nothing & you already have Chat History heading in SidebarNav  
+
+  projectNav: [
+    // Add project-like navigation items here
+  ],
+  secondaryNav: [
+    // Add support/feedback-like items here
+  ],
+};
+
+
+export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
+  const handleNewChat = () => {
+    console.log("New Chat clicked");
+    // Implement your new chat logic here
+  };
+
+  return (
+    <Sidebar
+      // variant="inset" // If your Sidebar primitive supports this like Shadcn's
+      {...props}
+      className={cn(
+        "bg-sidebar text-sidebar-foreground border-r border-sidebar-border",
+        props.className
+      )}
+    >
+      {/* Using UI Kit's SidebarHeader primitive for the top section */}
+      <SidebarHeader className="p-0"> {/* Remove primitive's padding if custom component handles it */}
+        <CustomSidebarHeader
+          appName={sidebarData.appName}
+          appIcon={Command}
+          onNewChat={handleNewChat}
+        />
+      </SidebarHeader>
+
+      {/* Using UI Kit's SidebarContent primitive for the scrollable middle section */}
+      <SidebarContent className="flex-1 overflow-y-auto p-0"> {/* Remove primitive's padding if custom component handles it */}
+        <SidebarNav
+          mainNav={sidebarData.mainNav}
+          // Pass other nav sections if defined
+        />
+      </SidebarContent>
+
+      {/* Using UI Kit's SidebarFooter primitive for the ~ section */}
+      <SidebarFooter className="p-0 mt-auto border-t border-sidebar-border"> {/* Remove primitive's padding */}
+        <SidebarAccount user={sidebarData.user} />
+      </SidebarFooter>
+
+      {/* <SidebarRail /> Potentially, if your UI kit uses this for collapsed state */}
+    </Sidebar>
+  );
+}--- app/entry.server.tsx ---
+/**
+ * By default, Remix will handle generating the HTTP Response for you.
+ * You are free to delete this file if you'd like to, but if you ever want it revealed again, you can run `npx remix reveal` ✨
+ * For more information, see https://remix.run/file-conventions/entry.server
+ */
+
+import { PassThrough } from "node:stream";
+
+import type { AppLoadContext, EntryContext } from "@remix-run/node";
+import { createReadableStreamFromReadable } from "@remix-run/node";
+import { RemixServer } from "@remix-run/react";
+import { isbot } from "isbot";
+import { renderToPipeableStream } from "react-dom/server";
+
+const ABORT_DELAY = 5_000;
+
+export default function handleRequest(
+  request: Request,
+  responseStatusCode: number,
+  responseHeaders: Headers,
+  remixContext: EntryContext,
+  // This is ignored so we can keep it in the template for visibility.  Feel
+  // free to delete this parameter in your app if you're not using it!
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  loadContext: AppLoadContext
+) {
+  return isbot(request.headers.get("user-agent") || "")
+    ? handleBotRequest(
+        request,
+        responseStatusCode,
+        responseHeaders,
+        remixContext
+      )
+    : handleBrowserRequest(
+        request,
+        responseStatusCode,
+        responseHeaders,
+        remixContext
+      );
+}
+
+function handleBotRequest(
+  request: Request,
+  responseStatusCode: number,
+  responseHeaders: Headers,
+  remixContext: EntryContext
+) {
+  return new Promise((resolve, reject) => {
+    let shellRendered = false;
+    const { pipe, abort } = renderToPipeableStream(
+      <RemixServer
+        context={remixContext}
+        url={request.url}
+        abortDelay={ABORT_DELAY}
+      />,
+      {
+        onAllReady() {
+          shellRendered = true;
+          const body = new PassThrough();
+          const stream = createReadableStreamFromReadable(body);
+
+          responseHeaders.set("Content-Type", "text/html");
+
+          resolve(
+            new Response(stream, {
+              headers: responseHeaders,
+              status: responseStatusCode,
+            })
+          );
+
+          pipe(body);
+        },
+        onShellError(error: unknown) {
+          reject(error);
+        },
+        onError(error: unknown) {
+          responseStatusCode = 500;
+          // Log streaming rendering errors from inside the shell.  Don't log
+          // errors encountered during initial shell rendering since they'll
+          // reject and get logged in handleDocumentRequest.
+          if (shellRendered) {
+            console.error(error);
+          }
+        },
+      }
+    );
+
+    setTimeout(abort, ABORT_DELAY);
+  });
+}
+
+function handleBrowserRequest(
+  request: Request,
+  responseStatusCode: number,
+  responseHeaders: Headers,
+  remixContext: EntryContext
+) {
+  return new Promise((resolve, reject) => {
+    let shellRendered = false;
+    const { pipe, abort } = renderToPipeableStream(
+      <RemixServer
+        context={remixContext}
+        url={request.url}
+        abortDelay={ABORT_DELAY}
+      />,
+      {
+        onShellReady() {
+          shellRendered = true;
+          const body = new PassThrough();
+          const stream = createReadableStreamFromReadable(body);
+
+          responseHeaders.set("Content-Type", "text/html");
+
+          resolve(
+            new Response(stream, {
+              headers: responseHeaders,
+              status: responseStatusCode,
+            })
+          );
+
+          pipe(body);
+        },
+        onShellError(error: unknown) {
+          reject(error);
+        },
+        onError(error: unknown) {
+          responseStatusCode = 500;
+          // Log streaming rendering errors from inside the shell.  Don't log
+          // errors encountered during initial shell rendering since they'll
+          // reject and get logged in handleDocumentRequest.
+          if (shellRendered) {
+            console.error(error);
+          }
+        },
+      }
+    );
+
+    setTimeout(abort, ABORT_DELAY);
+  });
+}
