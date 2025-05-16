@@ -5,7 +5,17 @@ import { twMerge } from "tailwind-merge"
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
---- app/lib/api.config.ts ---
+export function isProbablyMobile(): boolean {
+  if (typeof window !== "undefined") {
+    if (window.matchMedia("(pointer: coarse)").matches) return true;
+    // Broader check for mobile devices
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+      navigator.userAgent
+    );
+  }
+  // Fallback for SSR or non-browser environments
+  return false;
+}--- app/lib/api.config.ts ---
 // app/lib/api.config.ts
 
 // For client-side access in Remix + Vite, use VITE_ prefix for env vars
@@ -53,7 +63,41 @@ export function getApiUrl(routeKey: keyof typeof API_ROUTES): string {
     throw new Error(`API route for key "${String(routeKey)}" not found.`);
   }
   return `${API_BASE_URL}${path}`;
-}--- app/lib/auth.server.ts ---
+}--- app/lib/ai-models.ts ---
+// app/lib/ai-models.ts
+export interface AIModelConfig {
+  displayName: string;
+  model: string;
+  provider: string;
+  isDefault?: boolean; // Optional: useful for selecting default
+}
+
+export const AImodels: AIModelConfig[] = [
+  {
+    displayName: "GPT-4o Mini",
+    model: "gpt-4o-mini",
+    provider: "azure"
+  },
+  {
+    displayName: "Gemini 2.5 flash", // Updated display name to match model version (optional, adjust as needed)
+    model: "gemini-2.5-flash-preview-04-17", // From your example payload
+    provider: "google",
+    isDefault: true, // Marking this as default as per your previous defaultModelConfig
+  },
+  {
+    displayName: "Gemini 2.0 flash", // Updated display name to match model version (optional, adjust as needed)
+    model: "gemini-2.0-flash", // From your example payload
+    provider: "google",
+  }
+  // Add more models here as needed
+];
+
+// Select default based on isDefault flag or fallback
+export const defaultModelConfig: AIModelConfig = AImodels.find(m => m.isDefault) || AImodels[0];
+
+export const defaultSystemPrompt = "You are a helpful assistant.";
+export const API_STREAM_URL = "https://api-chat.kwikon.club/api/chat/stream";
+export const API_HISTORY_URL_BASE = "https://api-chat.kwikon.club/api/chat/"; // e.g., append {chatId}/history--- app/lib/auth.server.ts ---
 // app/lib/auth.server.ts
 import { redirect } from "@remix-run/node";
 import { getApiUrl, API_ROUTES } from "./api.config";
@@ -284,16 +328,17 @@ export default function App() {
   // This Outlet will render __app.tsx (for protected routes) or login.tsx, etc.
   return <Outlet />;
 }--- app/routes/__app.tsx ---
+// app/routes/__app.tsx    
 import type { LoaderFunctionArgs } from "@remix-run/node";  
 import { json } from "@remix-run/node";  
 import { Outlet, useLoaderData } from "@remix-run/react";  
+  
 import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";  
 import { AppSidebar } from "~/components/app-sidebar";  
-import { SidebarProvider, SidebarInset } from "~/components/ui/sidebar";  
-import { Command } from "lucide-react";  
+import { SidebarProvider, SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";  
 import type { NavItem } from "~/components/sidebar-nav";  
+import { Separator } from "~/components/ui/separator";  
   
-// Define the loader return type (optional, for clarity)  
 export interface AppLoaderData {  
   user: AuthenticatedUserDetails;  
   appName: string;  
@@ -302,7 +347,6 @@ export interface AppLoaderData {
   
 export async function loader({ request }: LoaderFunctionArgs) {  
   await requireAuth(request);  
-  
   // Provide only dummy data, until real user API is available  
   return json<AppLoaderData>({  
     user: {  
@@ -312,18 +356,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
       avatar_url: "/avatars/default.png",  
     },  
     appName: "Krivi AI",  
-    mainNavItems: [], // always provide array, not null or [null]  
+    mainNavItems: [],  
   });  
 }  
   
+  
 export default function AppLayout() {  
   const { user, appName, mainNavItems } = useLoaderData<typeof loader>();  
-  
-  // Map AuthenticatedUserDetails to SidebarAccount's expected props  
   const sidebarUser = {  
     name: user.name,  
     email: user.email,  
-    avatar: user.avatar_url || "/avatars/default.png",  
+    avatar: "/avatars/default.png",  
   };  
   
   return (  
@@ -333,361 +376,114 @@ export default function AppLayout() {
         appName={appName}  
         mainNav={mainNavItems}  
       />  
+      {/* This inset is the "main section" right of the sidebar */}  
       <SidebarInset>  
-        {/* Outlet renders matched child route */}  
-        <Outlet />  
+        {/* COLUMN FLEX for main app area */}  
+        <div className="relative flex flex-col h-[100dvh] min-h-0 w-full"> {/* The main column, taking whole viewport height */}  
+          {/* Fixed topbar: stays always at the top inside the app area */}  
+          <header className="sticky top-0 left-0 right-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background">  
+            <div className="flex items-center gap-2 px-4">  
+              <SidebarTrigger className="-ml-1" />  
+              <Separator orientation="vertical" className="mr-2 h-4 bg-border" />  
+            </div>  
+          </header>  
+  
+          {/* Main body below topbar, flexes to fill available height */}  
+          <main className="relative flex-1 min-h-0 w-full flex flex-col">  
+            {/* render whatever the route wants (in your case, ChatPageLayout)  
+                 Make sure ChatPageLayout uses the available height!! */}  
+            <Outlet />  
+          </main>  
+        </div>  
       </SidebarInset>  
     </SidebarProvider>  
   );  
-}  --- app/routes/sample.tsx ---
-import type { MetaFunction } from "@remix-run/node";
-import { useState } from "react"; // Need useState for Dialog
+}  --- app/routes/__app.chat.$chatId.tsx ---
+// app/routes/__app.chat.$chatId.tsx
+import { useLoaderData, useLocation } from "@remix-run/react"; // Added useLocation
+import { json, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { requireAuth } from "~/lib/auth.server";
+import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
+import type { Message } from "~/components/chat/MessageItem";
+import { API_HISTORY_URL_BASE } from "~/lib/ai-models";
 
-// Import required shadcn/ui components
-// Adjust import paths if your setup is different
-import { Button } from "~/components/ui/button";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "~/components/ui/card";
-import { Input } from "~/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "~/components/ui/select";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from "~/components/ui/dialog";
-import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "~/components/ui/accordion";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "~/components/ui/tabs";
-import { Popover, PopoverContent, PopoverTrigger } from "~/components/ui/popover";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "~/components/ui/tooltip"; // Requires TooltipProvider wrapper
-import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
-import { Badge } from "~/components/ui/badge";
-import { Separator } from "~/components/ui/separator"; // Good for spacing/visual break
-import { Label } from "~/components/ui/label"; // Useful with inputs/forms
+export const meta: MetaFunction = ({ params }) => [{ title: `Chat ${params.chatId ? `- ${params.chatId.substring(0,8)}` : ''} | Krivi AI` }];
 
-// Example icon - install lucide-react if not already
-import { Info } from "lucide-react";
-
-
-export const meta: MetaFunction = () => {
-  return [
-    { title: "Remix + Shadcn Theme Showcase" },
-    { name: "description", content: "Demonstrating shadcn components with a custom theme in Remix." },
-  ];
-};
-
-export default function ThemeShowcase() {
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-
-  return (
-    // Basic container for layout. Applies background/text color from _root.tsx/globals.css
-    <main className="container mx-auto py-8 px-4 font-sans"> {/* Using font-sans from your theme */}
-
-      {/* === Title Section === */}
-      <h1 className="text-4xl font-bold text-center mb-8">Remix + shadcn/ui Theme Showcase</h1>
-      <p className="text-center text-muted-foreground mb-12">
-        This page displays various shadcn/ui components using the custom theme defined in your CSS file.
-        <br/> (Designed primarily for Light Mode based on the provided CSS root variables)
-      </p>
-
-      {/* === Typography & Colors Showcase === */}
-      <section className="mb-12">
-          <h2 className="text-2xl font-semibold mb-4">Typography & Colors</h2>
-          {/* Colors are applied via tailwind classes based on your CSS variables */}
-          <div className="grid gap-4 mb-6">
-              <p className="text-foreground">Default Foreground text.</p>
-              <p className="text-primary">Primary text color.</p>
-              <p className="text-secondary-foreground bg-secondary p-2 rounded">Secondary text on Secondary background.</p>
-              <p className="text-muted-foreground bg-muted p-2 rounded">Muted text on Muted background.</p>
-              <p className="text-accent-foreground bg-accent p-2 rounded">Accent text on Accent background.</p>
-              <p className="text-destructive-foreground bg-destructive p-2 rounded">Destructive text on Destructive background.</p>
-          </div>
-          <h3 className="text-xl font-semibold mb-2">Fonts</h3>
-          {/* Font faces are applied via tailwind classes based on your CSS variables */}
-          <div className="grid gap-2">
-              <p className="font-sans">This is text using the Sans-serif font (Plus Jakarta Sans).</p>
-              <p className="font-serif">This is text using the Serif font (Lora).</p>
-              <p className="font-mono">This is text using the Monospace font (Roboto Mono).</p>
-          </div>
-      </section>
-
-      <Separator className="my-8" /> {/* Visual separator */}
-
-      {/* === Buttons Section === */}
-      <section className="mb-12">
-        <h2 className="text-2xl font-semibold mb-4">Buttons</h2>
-        <div className="flex flex-wrap gap-4">
-          <Button>Primary (Default)</Button>
-          <Button variant="secondary">Secondary</Button>
-          <Button variant="outline">Outline</Button>
-          <Button variant="ghost">Ghost</Button>
-          <Button variant="destructive">Destructive</Button>
-          <Button variant="link">Link</Button>
-          <Button disabled>Disabled</Button>
-          <Button>
-            <Info className="mr-2 h-4 w-4" />
-            With Icon
-          </Button>
-        </div>
-      </section>
-
-       <Separator className="my-8" />
-
-      {/* === Cards Section === */}
-      <section className="mb-12">
-        <h2 className="text-2xl font-semibold mb-4">Card</h2>
-        <Card className="w-[350px]"> {/* Example fixed width */}
-          <CardHeader>
-            <CardTitle>Card Title</CardTitle>
-            <CardDescription>Card description providing context or summary.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p>This is the main content area within the card body.</p>
-            <p className="mt-2 text-sm text-muted-foreground">More text, perhaps smaller.</p>
-          </CardContent>
-          <CardFooter className="flex justify-between">
-            <Button variant="outline">Cancel</Button>
-            <Button>Deploy</Button>
-          </CardFooter>
-        </Card>
-      </section>
-
-      <Separator className="my-8" />
-
-      {/* === Inputs & Selects Section === */}
-      <section className="mb-12">
-        <h2 className="text-2xl font-semibold mb-4">Inputs & Selects</h2>
-        <div className="grid w-full max-w-sm items-center gap-4">
-            <div className="grid gap-1.5">
-                 <Label htmlFor="email">Your Email</Label>
-                 <Input type="email" id="email" placeholder="Email" />
-            </div>
-            <div className="grid gap-1.5">
-                <Label htmlFor="status">Status</Label>
-                 <Select>
-                    <SelectTrigger className="w-[180px]">
-                        <SelectValue placeholder="Select a status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="active">Active</SelectItem>
-                        <SelectItem value="inactive">Inactive</SelectItem>
-                        <SelectItem value="pending">Pending</SelectItem>
-                    </SelectContent>
-                 </Select>
-             </div>
-        </div>
-      </section>
-
-      <Separator className="my-8" />
-
-      {/* === Dialog Section === */}
-      <section className="mb-12">
-        <h2 className="text-2xl font-semibold mb-4">Dialog</h2>
-        {/* Dialog requires state to control its open/close state */}
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger asChild>
-                <Button variant="outline">Open Dialog</Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px]"> {/* sm:max-w is a common pattern */}
-                <DialogHeader>
-                <DialogTitle>Edit profile</DialogTitle>
-                <DialogDescription>
-                    Make changes to your profile here. Click save when you're done.
-                </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="name" className="text-right">
-                    Name
-                    </Label>
-                    <Input id="name" defaultValue="Pedro Duarte" className="col-span-3" />
-                </div>
-                <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="username" className="text-right">
-                    Username
-                    </Label>
-                    <Input id="username" defaultValue="@peduarte" className="col-span-3" />
-                </div>
-                </div>
-                <DialogFooter>
-                 {/* Close button needs DialogClose or onOpenChange={} */}
-                 <DialogClose asChild>
-                    <Button type="button" variant="secondary">Close</Button>
-                 </DialogClose>
-                <Button type="submit">Save changes</Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
-      </section>
-
-      <Separator className="my-8" />
-
-      {/* === Accordion Section === */}
-      <section className="mb-12">
-        <h2 className="text-2xl font-semibold mb-4">Accordion</h2>
-        <Accordion type="single" collapsible className="w-full max-w-md"> {/* Example width */}
-             <AccordionItem value="item-1">
-                 <AccordionTrigger>Is it accessible?</AccordionTrigger>
-                 <AccordionContent>
-                     Yes. It adheres to the WAI-ARIA design pattern.
-                 </AccordionContent>
-             </AccordionItem>
-             <AccordionItem value="item-2">
-                 <AccordionTrigger>Is it styled?</AccordionTrigger>
-                 <AccordionContent>
-                     Yes. Comes with default styles that you can override.
-                 </AccordionContent>
-             </AccordionItem>
-             <AccordionItem value="item-3">
-                 <AccordionTrigger>Is it animated?</AccordionTrigger>
-                 <AccordionContent>
-                     Yes. It's animated by default, but you can disable it.
-                 </AccordionContent>
-             </AccordionItem>
-         </Accordion>
-      </section>
-
-      <Separator className="my-8" />
-
-       {/* === Tabs Section === */}
-      <section className="mb-12">
-        <h2 className="text-2xl font-semibold mb-4">Tabs</h2>
-        <Tabs defaultValue="account" className="w-full max-w-md"> {/* Example width */}
-            <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="account">Account</TabsTrigger>
-                <TabsTrigger value="password">Password</TabsTrigger>
-            </TabsList>
-            <TabsContent value="account" className="mt-4">
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Account</CardTitle>
-                        <CardDescription>
-                        Make changes to your account here. Click save when you're done.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                        {/* Your form content for account */}
-                         <div className="grid gap-1.5">
-                             <Label htmlFor="name">Name</Label>
-                             <Input id="name" defaultValue="Example User" />
-                         </div>
-                    </CardContent>
-                    <CardFooter>
-                        <Button>Save changes</Button>
-                    </CardFooter>
-                </Card>
-            </TabsContent>
-            <TabsContent value="password" className="mt-4">
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Password</CardTitle>
-                        <CardDescription>
-                        Change your password here. After saving, you'll be logged out.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                       {/* Your form content for password */}
-                       <div className="grid gap-1.5">
-                             <Label htmlFor="current">Current password</Label>
-                             <Input id="current" type="password" />
-                         </div>
-                         <div className="grid gap-1.5">
-                             <Label htmlFor="new">New password</Label>
-                             <Input id="new" type="password" />
-                         </div>
-                    </CardContent>
-                    <CardFooter>
-                        <Button>Save password</Button>
-                    </CardFooter>
-                </Card>
-            </TabsContent>
-        </Tabs>
-      </section>
-
-      <Separator className="my-8" />
-
-      {/* === Popover Section === */}
-      <section className="mb-12">
-         <h2 className="text-2xl font-semibold mb-4">Popover</h2>
-         <Popover>
-              <PopoverTrigger asChild>
-                  <Button variant="outline">Open Popover</Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-80"> {/* Example width */}
-                  <div className="grid gap-4">
-                      <div className="space-y-2">
-                          <h4 className="font-medium leading-none">Dimensions</h4>
-                          <p className="text-sm text-muted-foreground">Set the dimensions for the layer.</p>
-                      </div>
-                      <div className="grid gap-2">
-                          <div className="grid grid-cols-3 items-center gap-4">
-                              <Label htmlFor="width">Width</Label>
-                              <Input id="width" defaultValue="100%" className="col-span-2 h-8" />
-                          </div>
-                          <div className="grid grid-cols-3 items-center gap-4">
-                              <Label htmlFor="maxWidth">Max. width</Label>
-                              <Input id="maxWidth" defaultValue="300px" className="col-span-2 h-8" />
-                          </div>
-                          <div className="grid grid-cols-3 items-center gap-4">
-                              <Label htmlFor="height">Height</Label>
-                              <Input id="height" defaultValue="25px" className="col-span-2 h-8" />
-                          </div>
-                          <div className="grid grid-cols-3 items-center gap-4">
-                              <Label htmlFor="maxHeight">Max. height</Label>
-                              <Input id="maxHeight" defaultValue="not set" className="col-span-2 h-8" />
-                          </div>
-                      </div>
-                  </div>
-              </PopoverContent>
-          </Popover>
-      </section>
-
-      <Separator className="my-8" />
-
-      {/* === Tooltip Section === */}
-      <section className="mb-12">
-          <h2 className="text-2xl font-semibold mb-4">Tooltip (Hover over button)</h2>
-          {/* Tooltip requires a Provider wrapper */}
-          <TooltipProvider>
-              <Tooltip>
-                  <TooltipTrigger asChild>
-                      <Button variant="outline">Hover Me</Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                      <p>This is a helpful tooltip!</p>
-                  </TooltipContent>
-              </Tooltip>
-          </TooltipProvider>
-      </section>
-
-       <Separator className="my-8" />
-
-      {/* === Alert Section === */}
-      <section className="mb-12">
-        <h2 className="text-2xl font-semibold mb-4">Alert</h2>
-        <Alert className="max-w-lg"> {/* Example width */}
-            <Info className="h-4 w-4" /> {/* Example icon */}
-            <AlertTitle>Heads up!</AlertTitle>
-            <AlertDescription>
-                You can add components and dependencies to your app using the shadcn/ui cli.
-            </AlertDescription>
-        </Alert>
-      </section>
-
-      <Separator className="my-8" />
-
-      {/* === Badges Section === */}
-       <section className="mb-12">
-           <h2 className="text-2xl font-semibold mb-4">Badges</h2>
-           <div className="flex flex-wrap gap-2">
-               <Badge>Default</Badge>
-               <Badge variant="secondary">Secondary</Badge>
-               <Badge variant="outline">Outline</Badge>
-               <Badge variant="destructive">Destructive</Badge>
-               <Badge className="bg-primary text-primary-foreground hover:bg-primary/80">Custom Badge Color</Badge> {/* Example applying theme colors directly */}
-           </div>
-       </section>
-
-      {/* ... Add more components here as needed ... */}
-
-    </main>
-  );
+interface LoaderData {
+  chatId: string;
+  initialMessages: Message[];
+  error?: string;
+  fromNewChatFlow?: boolean; // From navigation state
 }
---- app/routes/login.tsx ---
+
+export async function loader({ request, params }: LoaderFunctionArgs): Promise<ReturnType<typeof json<LoaderData>>> {
+  await requireAuth(request);
+  const chatId = params.chatId;
+
+  if (!chatId) {
+    throw new Response("Chat ID missing", { status: 400 });
+  }
+
+  // Check if this load is due to navigation from a new chat flow (see ChatPageLayout navigate state)
+  // In a real app, you might get `location.state` on the client, but loader runs on server.
+  // The `fromNewChatFlow` flag is more illustrative for client-side logic post-load.
+  // For the loader, we always try to fetch history if a chatId is present.
+  // The client can then decide whether to use loader messages or state messages.
+
+  let messagesFromHistory: Message[] = [];
+  const historyUrl = `${API_HISTORY_URL_BASE}${chatId}/history?limit=50`;
+
+  try {
+    const response = await fetch(historyUrl, {
+      method: 'GET',
+      headers: { 'Cookie': request.headers.get('Cookie') || '' },
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.messages && Array.isArray(data.messages)) {
+        messagesFromHistory = data.messages.map((msg: any) => ({
+          id: msg.id || crypto.randomUUID(), role: msg.role, content: msg.content, createdAt: msg.createdAt,
+        }));
+      }
+    } else {
+      // ... (error handling as before)
+      console.error(`Failed to fetch chat history for ${chatId}: ${response.status}`);
+      return json({ chatId, initialMessages: [], error: `Failed to load history: ${response.status}` });
+    }
+  } catch (error: any) {
+    // ... (error handling as before)
+    console.error(`Error fetching chat history for ${chatId}:`, error);
+    return json({ chatId, initialMessages: [], error: `Error loading chat: ${error.message}` });
+  }
+  return json({ chatId, initialMessages: messagesFromHistory });
+}
+
+export default function ChatWithIdPage() {
+  const loaderData = useLoaderData<LoaderData>();
+  const location = useLocation(); // Get location to access state
+
+  // Prefer messages from navigation state if it's from the new chat flow.
+  // This provides a smoother UX by showing the already typed messages immediately.
+  const messagesFromState = (location.state as { initialMessages?: Message[], fromNewChatFlow?: boolean })?.initialMessages;
+  const isFromNewChatFlow = (location.state as { fromNewChatFlow?: boolean })?.fromNewChatFlow;
+  
+  const finalInitialMessages = (isFromNewChatFlow && messagesFromState && messagesFromState.length > 0) 
+                               ? messagesFromState 
+                               : loaderData.initialMessages;
+
+  // When navigating between different chat IDs, `loaderData.chatId` will change.
+  // This change in prop to `ChatPageLayout` triggers its internal useEffect for cleanup/reset.
+  // We also KEY ChatPageLayout by `loaderData.chatId` to ensure a full re-mount
+  // when switching between different existing chats. This is a robust way to reset all child state.
+  return (
+    <ChatPageLayout
+      key={loaderData.chatId} // CRITICAL: Re-mounts ChatPageLayout when navigating between different chat IDs
+      initialChatId={loaderData.chatId}
+      initialMessages={finalInitialMessages}
+    />
+  );
+}--- app/routes/login.tsx ---
 // app/routes/login.tsx
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
@@ -824,197 +620,33 @@ export default function LoginPage() {
       </Card>  
     </div>  
   );  
-}  --- app/routes/__app.page.tsx ---
-// app/routes/__app.page.tsx
-// SidebarProvider, AppSidebar, SidebarInset are now in __app.tsx layout
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "~/components/ui/breadcrumb";
-import { Separator } from "~/components/ui/separator";
-import { SidebarTrigger } from "~/components/ui/sidebar"; // Still needed for the header toggle
-// Potentially import MetaFunction if this page needs specific meta tags
-// import type { MetaFunction } from "@remix-run/node";
-// import { useRouteLoaderData } from "@remix-run/react";
-// import type { AppLoaderData } from "../__app";
+}  --- app/routes/__app._index.tsx ---
+// app/routes/__app._index.tsx
+import { useLoaderData } from "@remix-run/react";
+import { json, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { requireAuth } from "~/lib/auth.server";
+import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
+import type { Message } from "~/components/chat/MessageItem"; // Adjust path
 
-// export const meta: MetaFunction = () => { return [{ title: "My Page" }]};
+export const meta: MetaFunction = () => [{ title: "New Chat | Krivi AI" }];
 
-export default function AppPage() { // Changed name for clarity, can be 'Page'
-  // const appData = useRouteLoaderData<AppLoaderData>("routes/__app");
-  // Access user data via appData.user if needed here
-
-  return (
-    <>
-      {/* This header is part of the content for this specific page */}
-      <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background">
-        <div className="flex items-center gap-2 px-4">
-          <SidebarTrigger className="-ml-1" />
-          <Separator orientation="vertical" className="mr-2 h-4 bg-border" />
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem className="hidden md:block">
-                <BreadcrumbLink href="#" className="text-foreground hover:text-primary">
-                  Building Your Application
-                </BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator className="hidden md:block text-muted-foreground" />
-              <BreadcrumbItem>
-                <BreadcrumbPage className="text-foreground">Data Fetching</BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </div>
-      </header>
-      {/* Page-specific content */}
-      <div className="flex flex-1 flex-col gap-4 p-4 pt-2">
-        <div className="grid auto-rows-min gap-4 md:grid-cols-3">
-          <div className="aspect-video rounded-xl bg-muted/50" />
-          <div className="aspect-video rounded-xl bg-muted/50" />
-          <div className="aspect-video rounded-xl bg-muted/50" />
-        </div>
-        <div className="min-h-[100vh] flex-1 rounded-xl bg-muted/50 md:min-h-min" />
-      </div>
-    </>
-  );
-}--- app/routes/__app._index.tsx ---
-import type { MetaFunction } from "@remix-run/node";
-// No loader needed here usually, as __app.tsx handles auth and provides user data if necessary
-// If this page specifically needs more data, add a loader.
-// import { useRouteLoaderData } from "@remix-run/react";
-// import type { AppLoaderData } from "../__app"; // To access user data
-
-export const meta: MetaFunction = () => {
-  return [
-    { title: "Krivi AI Home" }, // Updated title
-    { name: "description", content: "Welcome to Krivi AI!" },
-  ];
-};
-
-export default function AppIndexPage() {
-  // const appData = useRouteLoaderData<AppLoaderData>("routes/__app");
-  // const userName = appData?.user?.name;
-
-  return (
-    <div className="flex h-full flex-col items-center justify-center p-4"> {/* Changed to h-full for layout context */}
-      <div className="flex flex-col items-center gap-16 text-center">
-        <header className="flex flex-col items-center gap-9">
-          <h1 className="text-2xl font-bold text-foreground">
-            Welcome to Krivi AI!
-            {/* {userName && <>, {userName}!</>} */}
-          </h1>
-          <p className="text-muted-foreground">This is your main application dashboard area.</p>
-          {/* You can replace the Remix logo with your app's content or components */}
-          <div className="h-[144px] w-[434px] hidden"> {/* Hiding default Remix logo for now */}
-            <img
-              src="/logo-light.png"
-              alt="Remix"
-              className="block w-full dark:hidden"
-            />
-            <img
-              src="/logo-dark.png"
-              alt="Remix"
-              className="hidden w-full dark:block"
-            />
-          </div>
-        </header>
-        <div className="mt-8">
-          <p className="text-lg text-foreground">Start by exploring the sidebar or creating a new chat.</p>
-          {/* Add quick links or calls to action here */}
-        </div>
-      </div>
-    </div>
-  );
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAuth(request);
+  // For a new chat at the app root, initialChatId is null.
+  // No initial messages unless we implement "restore unsaved new chat" later.
+  return json({ initialChatId: null, initialMessages: [] });
 }
 
-const resources = [
-  {
-    href: "https://remix.run/start/quickstart",
-    text: "Quick Start (5 min)",
-    icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="20"
-        viewBox="0 0 20 20"
-        fill="none"
-        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
-      >
-        <path
-          d="M8.51851 12.0741L7.92592 18L15.6296 9.7037L11.4815 7.33333L12.0741 2L4.37036 10.2963L8.51851 12.0741Z"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    href: "https://remix.run/start/tutorial",
-    text: "Tutorial (30 min)",
-    icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="20"
-        viewBox="0 0 20 20"
-        fill="none"
-        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
-      >
-        <path
-          d="M4.561 12.749L3.15503 14.1549M3.00811 8.99944H1.01978M3.15503 3.84489L4.561 5.2508M8.3107 1.70923L8.3107 3.69749M13.4655 3.84489L12.0595 5.2508M18.1868 17.0974L16.635 18.6491C16.4636 18.8205 16.1858 18.8205 16.0144 18.6491L13.568 16.2028C13.383 16.0178 13.0784 16.0347 12.915 16.239L11.2697 18.2956C11.047 18.5739 10.6029 18.4847 10.505 18.142L7.85215 8.85711C7.75756 8.52603 8.06365 8.21994 8.39472 8.31453L17.6796 10.9673C18.0223 11.0653 18.1115 11.5094 17.8332 11.7321L15.7766 13.3773C15.5723 13.5408 15.5554 13.8454 15.7404 14.0304L18.1868 16.4767C18.3582 16.6481 18.3582 16.926 18.1868 17.0974Z"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    href: "https://remix.run/docs",
-    text: "Remix Docs",
-    icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="20"
-        viewBox="0 0 20 20"
-        fill="none"
-        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
-      >
-        <path
-          d="M9.99981 10.0751V9.99992M17.4688 17.4688C15.889 19.0485 11.2645 16.9853 7.13958 12.8604C3.01467 8.73546 0.951405 4.11091 2.53116 2.53116C4.11091 0.951405 8.73546 3.01467 12.8604 7.13958C16.9853 11.2645 19.0485 15.889 17.4688 17.4688ZM2.53132 17.4688C0.951566 15.8891 3.01483 11.2645 7.13974 7.13963C11.2647 3.01471 15.8892 0.951453 17.469 2.53121C19.0487 4.11096 16.9854 8.73551 12.8605 12.8604C8.73562 16.9853 4.11107 19.0486 2.53132 17.4688Z"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    href: "https://rmx.as/discord",
-    text: "Join Discord",
-    icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="20"
-        viewBox="0 0 24 20"
-        fill="none"
-        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
-      >
-        <path
-          d="M15.0686 1.25995L14.5477 1.17423L14.2913 1.63578C14.1754 1.84439 14.0545 2.08275 13.9422 2.31963C12.6461 2.16488 11.3406 2.16505 10.0445 2.32014C9.92822 2.08178 9.80478 1.84975 9.67412 1.62413L9.41449 1.17584L8.90333 1.25995C7.33547 1.51794 5.80717 1.99419 4.37748 2.66939L4.19 2.75793L4.07461 2.93019C1.23864 7.16437 0.46302 11.3053 0.838165 15.3924L0.868838 15.7266L1.13844 15.9264C2.81818 17.1714 4.68053 18.1233 6.68582 18.719L7.18892 18.8684L7.50166 18.4469C7.96179 17.8268 8.36504 17.1824 8.709 16.4944L8.71099 16.4904C10.8645 17.0471 13.128 17.0485 15.2821 16.4947C15.6261 17.1826 16.0293 17.8269 16.4892 18.4469L16.805 18.8725L17.3116 18.717C19.3056 18.105 21.1876 17.1751 22.8559 15.9238L23.1224 15.724L23.1528 15.3923C23.5873 10.6524 22.3579 6.53306 19.8947 2.90714L19.7759 2.73227L19.5833 2.64518C18.1437 1.99439 16.6386 1.51826 15.0686 1.25995ZM16.6074 10.7755L16.6074 10.7756C16.5934 11.6409 16.0212 12.1444 15.4783 12.1444C14.9297 12.1444 14.3493 11.6173 14.3493 10.7877C14.3493 9.94885 14.9378 9.41192 15.4783 9.41192C16.0471 9.41192 16.6209 9.93851 16.6074 10.7755ZM8.49373 12.1444C7.94513 12.1444 7.36471 11.6173 7.36471 10.7877C7.36471 9.94885 7.95323 9.41192 8.49373 9.41192C9.06038 9.41192 9.63892 9.93712 9.6417 10.7815C9.62517 11.6239 9.05462 12.1444 8.49373 12.1444Z"
-          strokeWidth="1.5"
-        />
-      </svg>
-    ),
-  },
-];
---- app/entry.client.tsx ---
+export default function AppRootNewChatPage() {
+  const { initialChatId, initialMessages } = useLoaderData<{ 
+    initialChatId: null; 
+    initialMessages: Message[]; 
+  }>();
+
+  // Crucially, ChatPageLayout itself is NOT keyed here.
+  // Its internal logic handles the "new chat" state based on initialChatId being null.
+  return <ChatPageLayout initialChatId={initialChatId} initialMessages={initialMessages} />;
+}--- app/entry.client.tsx ---
 /**
  * By default, Remix will handle hydrating your app on the client for you.
  * You are free to delete this file if you'd like to, but if you ever want it revealed again, you can run `npx remix reveal` ✨
@@ -1034,277 +666,293 @@ startTransition(() => {
   );
 });
 --- app/components/sidebar-nav.tsx ---
-// /app/components/sidebar-nav.tsx
-import * as React from "react";
-import { Link, useNavigate } from "@remix-run/react"; // Import Link and useNavigate
-import { ChevronRight, type LucideIcon as LucideIconType } from "lucide-react";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
-import { Button } from "~/components/ui/button";
-import { Separator } from "~/components/ui/separator";
-import { cn } from "~/lib/utils";
-import { getApiUrl } from "~/lib/api.config"; // Use this for API calls
-
-type LucideIcon = LucideIconType;
-
-// --- Types ---
-export interface NavSubItem { // Exported if needed elsewhere
-  id: string;
-  title: string;
-  href: string;
-  isActive?: boolean;
-}
-
-export interface NavItem { // Exported for __app.tsx
-  id: string;
-  title: string;
-  href?: string;
-  icon?: LucideIcon;
-  isActive?: boolean;
-  subItems?: NavSubItem[];
-  isGroupLabel?: boolean;
-  // onClick can be removed if navigation is handled by Link/Navigate
-}
-
-interface SidebarNavProps {
-  mainNav: NavItem[];
-}
-
-interface ApiChatSession {
-  chatId: string;
-  title: string;
-  createdAt: string;
-  lastMessageAt: string;
-}
-
-// --- Utility ---
-const getStartOfDay = (date: Date): Date => {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-};
-
-const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[] => {
-  const navItems: NavItem[] = [];
-  if (!Array.isArray(chatSessions) || chatSessions.length === 0) return navItems;
-
-  const now = new Date();
-  const todayStart = getStartOfDay(now);
-  const yesterdayStart = new Date(todayStart);
-  yesterdayStart.setDate(todayStart.getDate() - 1);
-  const sevenDaysAgoStart = new Date(todayStart);
-  sevenDaysAgoStart.setDate(todayStart.getDate() - 7);
-  const thirtyDaysAgoStart = new Date(todayStart);
-  thirtyDaysAgoStart.setDate(todayStart.getDate() - 30);
-
-  const sections: { [key: string]: ApiChatSession[] } = {
-    today: [], yesterday: [], prev7Days: [], prev30Days: [],
-  };
-
-  chatSessions.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
-
-  chatSessions.forEach(session => {
-    const sessionDate = new Date(session.lastMessageAt);
-    if (sessionDate >= todayStart)      sections.today.push(session);
-    else if (sessionDate >= yesterdayStart) sections.yesterday.push(session);
-    else if (sessionDate >= sevenDaysAgoStart) sections.prev7Days.push(session);
-    else if (sessionDate >= thirtyDaysAgoStart) sections.prev30Days.push(session);
-    // older items are ignored for now, could add an "Older" section
-  });
-
-  const createChatNavItem = (session: ApiChatSession): NavItem => ({
-    id: `chat-${session.chatId}`,
-    title: session.title.length > 30 ? session.title.substring(0, 27) + "..." : session.title,
-    href: `/chat/${session.chatId}`, // Use this for Remix <Link>
-    // No onClick needed here as <Link> will handle navigation
-  });
-
-  if (sections.today.length > 0) {
-    navItems.push({ id: 'ch-label-today', title: 'Today', isGroupLabel: true });
-    sections.today.forEach(s => navItems.push(createChatNavItem(s)));
-  }
-  if (sections.yesterday.length > 0) {
-    navItems.push({ id: 'ch-label-yesterday', title: 'Yesterday', isGroupLabel: true });
-    sections.yesterday.forEach(s => navItems.push(createChatNavItem(s)));
-  }
-  if (sections.prev7Days.length > 0) {
-    navItems.push({ id: 'ch-label-prev7', title: 'Previous 7 days', isGroupLabel: true });
-    sections.prev7Days.forEach(s => navItems.push(createChatNavItem(s)));
-  }
-  if (sections.prev30Days.length > 0) {
-    navItems.push({ id: 'ch-label-prev30', title: 'Previous 30 days', isGroupLabel: true });
-    sections.prev30Days.forEach(s => navItems.push(createChatNavItem(s)));
-  }
-
-  return navItems;
-};
-
-// --- NavItemDisplay ---
-const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item, isSubItem = false }) => {
-  const [isOpen, setIsOpen] = React.useState(item.isActive ?? false);
-  const navigate = useNavigate(); // For programmatic navigation if needed
-
-  if (item.isGroupLabel) {
-    return <div className="px-3 pt-4 pb-1.5 text-[0.8125rem] font-semibold text-sidebar-foreground">
-      {item.title}
-    </div>;
-  }
-
-  const commonButtonClasses = cn(
-    "w-full justify-start items-center gap-2.5 h-auto px-3 py-1.5 text-[0.8125rem] font-medium",
-    isSubItem && "pl-9 pr-3 py-1.5 text-xs",
-    item.isActive
-      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-    "transition-colors rounded-md"
-  );
-
-  // For simple links (including chat history items)
-  if (!item.subItems || item.subItems.length === 0) {
-    return (
-      <Button
-        variant="ghost"
-        asChild // Important for Link to take over styling and behavior
-        className={commonButtonClasses}
-        title={item.title}
-      >
-        <Link to={item.href || "#"} prefetch="intent"> {/* Use Link component */}
-          {item.icon && <item.icon className={cn("size-4 shrink-0", isSubItem && "size-3.5")} />}
-          <span className="truncate flex-1">{item.title}</span>
-        </Link>
-      </Button>
-    );
-  }
-
-  // For collapsible items
-  return (
-    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="w-full">
-      <div className="flex items-center">
-        {/* Main part of the collapsible trigger - can be a Link if item.href is primary action */}
-        <Button
-            variant="ghost"
-            asChild={!!item.href} // Use asChild if item.href exists to make it a Link
-            className={cn(commonButtonClasses, "flex-1")}
-            title={item.title}
-            onClick={!item.href ? (e) => { e.preventDefault(); setIsOpen(!isOpen); } : undefined} // Toggle if not a link
-        >
-            {item.href ? (
-                <Link to={item.href} prefetch="intent" onClick={(e) => {
-                    // If it has sub-items, prevent navigation and toggle.
-                    // If it also has an href, this behavior might be complex.
-                    // Typically, a collapsible trigger itself doesn't navigate.
-                    if (item.subItems && item.subItems.length > 0) {
-                        e.preventDefault();
-                        setIsOpen(!isOpen);
-                    }
-                }}>
-                    {item.icon && <item.icon className="size-4 shrink-0" />}
-                    <span className="truncate flex-1">{item.title}</span>
-                </Link>
-            ) : (
-                // If no href, the button itself handles the click for collapsing
-                <>
-                    {item.icon && <item.icon className="size-4 shrink-0" />}
-                    <span className="truncate flex-1">{item.title}</span>
-                </>
-            )}
-        </Button>
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" size="icon" className="ml-1 size-7 shrink-0">
-            <ChevronRight className={cn("size-3.5 transition-transform text-sidebar-foreground/60", isOpen && "rotate-90")} />
-            <span className="sr-only">Toggle {item.title}</span>
-          </Button>
-        </CollapsibleTrigger>
-      </div>
-      <CollapsibleContent className="pl-3.5 mt-0.5 space-y-0.5">
-        {item.subItems.map((subItem) => (
-          <NavItemDisplay
-            key={subItem.id}
-            item={{ ...subItem, icon: (subItem as any).icon || (() => null) }}
-            isSubItem
-          />
-        ))}
-      </CollapsibleContent>
-    </Collapsible>
-  );
-};
-
-// --- SidebarNav (Main) ---
-export function SidebarNav({ mainNav }: SidebarNavProps) {
-  const [chatHistoryNavItems, setChatHistoryNavItems] = React.useState<NavItem[]>([]);
-  const [isLoadingHistory, setIsLoadingHistory] = React.useState(true);
-  const [errorHistory, setErrorHistory] = React.useState<string | null>(null);
-
-  const refreshChatHistory = React.useCallback(async () => {
-    setIsLoadingHistory(true);
-    setErrorHistory(null);
-    try {
-      const apiUrl = getApiUrl("CHAT_SESSION_LIST"); // Use getApiUrl
-      const response = await fetch(apiUrl, {
-        credentials: "include",
-        headers: { "Accept": "application/json" }
-      });
-
-      if (!response.ok) {
-        let errorData = `API Error: ${response.status} ${response.statusText}`;
-        try {
-          if (response.headers.get("content-type")?.includes("application/json")) {
-            const jsonData = await response.json();
-            errorData = jsonData.message || JSON.stringify(jsonData);
-          } else {
-            errorData = await response.text();
-          }
-        } catch (parseErr) { /* ignore, use statusText */ }
-        throw new Error(errorData);
-      }
-      const data: ApiChatSession[] = await response.json();
-      const processedNavItems = processChatHistoryToNavItems(data);
-      setChatHistoryNavItems(processedNavItems);
-    } catch (err) {
-      console.error("[SidebarNav] Failed to fetch/process chat history:", err);
-      setErrorHistory(err instanceof Error ? err.message : "An unknown error occurred.");
-      setChatHistoryNavItems([]);
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  }, []);
-
-  React.useEffect(() => {
-    refreshChatHistory();
-  }, [refreshChatHistory]);
-
-  return (
-    <div className="flex flex-col h-full p-2 space-y-1">
-      {mainNav.length > 0 && (
-        <nav className="space-y-0.5">
-          {mainNav.map((item) => <NavItemDisplay key={item.id} item={item} />)}
-        </nav>
-      )}
-
-      {(mainNav.length > 0 && (isLoadingHistory || chatHistoryNavItems.length > 0 || errorHistory)) && (
-        <Separator className="my-2 bg-border/60" />
-      )}
-
-      <div className="px-1 pt-1 pb-1 text-base font-semibold text-sidebar-foreground">
-        Chat History
-      </div>
-
-      <div className="flex-1 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
-        {isLoadingHistory ? (
-          <div className="px-3 py-2 text-sm text-sidebar-foreground/70 text-center">Loading history…</div>
-        ) : errorHistory ? (
-          <div className="px-3 py-2 text-sm text-destructive text-center break-words">
-            Error: {errorHistory.substring(0,150)}{errorHistory.length > 150 && "..."}
-            <Button variant="link" size="sm" onClick={refreshChatHistory} className="mt-1">Try again</Button>
-          </div>
-        ) : chatHistoryNavItems.length > 0 ? (
-          chatHistoryNavItems.map((item) => <NavItemDisplay key={item.id} item={item} />)
-        ) : (
-          <div className="px-3 py-2 text-xs text-sidebar-foreground/60 italic">No chat history found.</div>
-        )}
-      </div>
-    </div>
-  );
-}--- app/components/sidebar-account.tsx ---
+import * as React from "react";  
+import { Link, useNavigate } from "@remix-run/react";  
+import { ChevronRight, type LucideIcon as LucideIconType } from "lucide-react";  
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";  
+import { Button } from "~/components/ui/button";  
+import { Separator } from "~/components/ui/separator";  
+import { cn } from "~/lib/utils";  
+import { getApiUrl } from "~/lib/api.config";  
+  
+type LucideIcon = LucideIconType;  
+  
+export interface NavSubItem {  
+  id: string;  
+  title: string;  
+  href: string;  
+  isActive?: boolean;  
+}  
+  
+export interface NavItem {  
+  id: string;  
+  title: string;  
+  href?: string;  
+  icon?: LucideIcon;  
+  isActive?: boolean;  
+  subItems?: NavSubItem[]; // could be NavItem[] but keep as is for simplicity  
+  isGroupLabel?: boolean;  
+}  
+  
+interface SidebarNavProps {  
+  mainNav: NavItem[];  
+}  
+  
+interface ApiChatSession {  
+  chatId: string;  
+  title: string;  
+  createdAt: string;  
+  lastMessageAt: string;  
+}  
+  
+// --- Utility ---  
+const getStartOfDay = (date: Date): Date => {  
+  const d = new Date(date);  
+  d.setHours(0, 0, 0, 0);  
+  return d;  
+};  
+  
+const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[] => {  
+  const navItems: NavItem[] = [];  
+  if (!Array.isArray(chatSessions) || chatSessions.length === 0) return navItems;  
+  
+  const now = new Date();  
+  const todayStart = getStartOfDay(now);  
+  const yesterdayStart = new Date(todayStart);  
+  yesterdayStart.setDate(todayStart.getDate() - 1);  
+  const sevenDaysAgoStart = new Date(todayStart);  
+  sevenDaysAgoStart.setDate(todayStart.getDate() - 7);  
+  const thirtyDaysAgoStart = new Date(todayStart);  
+  thirtyDaysAgoStart.setDate(todayStart.getDate() - 30);  
+  
+  const sections: { [key: string]: ApiChatSession[] } = {  
+    today: [],  
+    yesterday: [],  
+    prev7Days: [],  
+    prev30Days: [],  
+  };  
+  
+  chatSessions.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());  
+  
+  chatSessions.forEach(session => {  
+    const sessionDate = new Date(session.lastMessageAt);  
+    if (sessionDate >= todayStart)  
+      sections.today.push(session);  
+    else if (sessionDate >= yesterdayStart)  
+      sections.yesterday.push(session);  
+    else if (sessionDate >= sevenDaysAgoStart)  
+      sections.prev7Days.push(session);  
+    else if (sessionDate >= thirtyDaysAgoStart)  
+      sections.prev30Days.push(session);  
+  });  
+  
+  const createChatNavItem = (session: ApiChatSession): NavItem => ({  
+    id: `chat-${session.chatId}`,  
+    title: session.title.length > 30 ? session.title.substring(0, 27) + "..." : session.title,  
+    href: `/chat/${session.chatId}`,  
+  });  
+  
+  if (sections.today.length > 0) {  
+    navItems.push({ id: 'ch-label-today', title: 'Today', isGroupLabel: true });  
+    sections.today.forEach(s => navItems.push(createChatNavItem(s)));  
+  }  
+  if (sections.yesterday.length > 0) {  
+    navItems.push({ id: 'ch-label-yesterday', title: 'Yesterday', isGroupLabel: true });  
+    sections.yesterday.forEach(s => navItems.push(createChatNavItem(s)));  
+  }  
+  if (sections.prev7Days.length > 0) {  
+    navItems.push({ id: 'ch-label-prev7', title: 'Previous 7 days', isGroupLabel: true });  
+    sections.prev7Days.forEach(s => navItems.push(createChatNavItem(s)));  
+  }  
+  if (sections.prev30Days.length > 0) {  
+    navItems.push({ id: 'ch-label-prev30', title: 'Previous 30 days', isGroupLabel: true });  
+    sections.prev30Days.forEach(s => navItems.push(createChatNavItem(s)));  
+  }  
+  
+  return navItems;  
+};  
+  
+// --- NavItemDisplay ---  
+/**  
+ * For simple links (no sub-items), we disable prefetch for chat history entries (and all simple links by default).  
+ * If you have other simple sidebar links you want to keep prefetch="intent", adjust the condition!  
+ */  
+const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item, isSubItem = false }) => {  
+  const [isOpen, setIsOpen] = React.useState(item.isActive ?? false);  
+  
+  if (item.isGroupLabel) {  
+    return (  
+      <div className="px-3 pt-4 pb-1.5 text-[0.8125rem] font-semibold text-sidebar-foreground">  
+        {item.title}  
+      </div>  
+    );  
+  }  
+  
+  const commonButtonClasses = cn(  
+    "w-full justify-start items-center gap-2.5 h-auto px-3 py-1.5 text-[0.8125rem] font-medium",  
+    isSubItem && "pl-9 pr-3 py-1.5 text-xs",  
+    item.isActive  
+      ? "bg-sidebar-accent text-sidebar-accent-foreground"  
+      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",  
+    "transition-colors rounded-md"  
+  );  
+  
+  // --- SIMPLE LINK (no subItems): always prefetch="none" for chat history ---  
+  if (!item.subItems || item.subItems.length === 0) {  
+    return (  
+      <Button  
+        variant="ghost"  
+        asChild  
+        className={commonButtonClasses}  
+        title={item.title}  
+      >  
+        <Link  
+          to={item.href || "#"}  
+          prefetch="none"  
+        >  
+          {item.icon && (  
+            <item.icon className={cn("size-4 shrink-0", isSubItem && "size-3.5")} />  
+          )}  
+          <span className="truncate flex-1">{item.title}</span>  
+        </Link>  
+      </Button>  
+    );  
+  }  
+  
+  // ---- COLLAPSIBLE GROUP (could have its head as link) ----  
+  return (  
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="w-full">  
+      <div className="flex items-center">  
+        <Button  
+          variant="ghost"  
+          asChild={!!item.href}  
+          className={cn(commonButtonClasses, "flex-1")}  
+          title={item.title}  
+          onClick={!item.href ? (e) => { e.preventDefault(); setIsOpen(!isOpen); } : undefined}  
+        >  
+          {item.href ? (  
+            <Link  
+              to={item.href}  
+              prefetch="none" // For collapsible main link, also prevent prefetch  
+              onClick={(e) => {  
+                if (item.subItems && item.subItems.length > 0) {  
+                  e.preventDefault();  
+                  setIsOpen(!isOpen);  
+                }  
+                // else allow navigation  
+              }}  
+            >  
+              {item.icon && <item.icon className="size-4 shrink-0" />}  
+              <span className="truncate flex-1">{item.title}</span>  
+            </Link>  
+          ) : (  
+            <>  
+              {item.icon && <item.icon className="size-4 shrink-0" />}  
+              <span className="truncate flex-1">{item.title}</span>  
+            </>  
+          )}  
+        </Button>  
+        <CollapsibleTrigger asChild>  
+          <Button variant="ghost" size="icon" className="ml-1 size-7 shrink-0">  
+            <ChevronRight className={cn("size-3.5 transition-transform text-sidebar-foreground/60", isOpen && "rotate-90")} />  
+            <span className="sr-only">Toggle {item.title}</span>  
+          </Button>  
+        </CollapsibleTrigger>  
+      </div>  
+      <CollapsibleContent className="pl-3.5 mt-0.5 space-y-0.5">  
+        {/* Apply the same rule recursively to sub-items: prefetch="none" */}  
+        {item.subItems.map((subItem) => (  
+          <NavItemDisplay  
+            key={subItem.id}  
+            // If your subItems are not NavItem, but NavSubItem, convert accordingly:  
+            item={{ ...subItem, icon: (subItem as any).icon || undefined }}  
+            isSubItem  
+          />  
+        ))}  
+      </CollapsibleContent>  
+    </Collapsible>  
+  );  
+};  
+// ----------- MAIN SIDEBARNAV COMPONENT -----------  
+export function SidebarNav({ mainNav }: SidebarNavProps) {  
+  const [chatHistoryNavItems, setChatHistoryNavItems] = React.useState<NavItem[]>([]);  
+  const [isLoadingHistory, setIsLoadingHistory] = React.useState(true);  
+  const [errorHistory, setErrorHistory] = React.useState<string | null>(null);  
+  
+  const refreshChatHistory = React.useCallback(async () => {  
+    setIsLoadingHistory(true);  
+    setErrorHistory(null);  
+    try {  
+      const apiUrl = getApiUrl("CHAT_SESSION_LIST");  
+      const response = await fetch(apiUrl, {  
+        credentials: "include",  
+        headers: { "Accept": "application/json" }  
+      });  
+      if (!response.ok) {  
+        let errorData = `API Error: ${response.status} ${response.statusText}`;  
+        try {  
+          if (response.headers.get("content-type")?.includes("application/json")) {  
+            const jsonData = await response.json();  
+            errorData = jsonData.message || JSON.stringify(jsonData);  
+          } else {  
+            errorData = await response.text();  
+          }  
+        } catch (parseErr) { /* ignore, use statusText */ }  
+        throw new Error(errorData);  
+      }  
+      const data: ApiChatSession[] = await response.json();  
+      const processedNavItems = processChatHistoryToNavItems(data);  
+      setChatHistoryNavItems(processedNavItems);  
+    } catch (err) {  
+      console.error("[SidebarNav] Failed to fetch/process chat history:", err);  
+      setErrorHistory(err instanceof Error ? err.message : "An unknown error occurred.");  
+      setChatHistoryNavItems([]);  
+    } finally {  
+      setIsLoadingHistory(false);  
+    }  
+  }, []);  
+  
+  React.useEffect(() => { refreshChatHistory(); }, [refreshChatHistory]);  
+  
+  return (  
+    <div className="flex flex-col h-full p-2 space-y-1">  
+      {mainNav.length > 0 && (  
+        <nav className="space-y-0.5">  
+          {mainNav.map((item) => <NavItemDisplay key={item.id} item={item} />)}  
+        </nav>  
+      )}  
+  
+      {(mainNav.length > 0 && (isLoadingHistory || chatHistoryNavItems.length > 0 || errorHistory)) && (  
+        <Separator className="my-2 bg-border/60" />  
+      )}  
+  
+      <div className="px-1 pt-1 pb-1 text-base font-semibold text-sidebar-foreground">  
+        Chat History  
+      </div>  
+  
+      <div className="flex-1 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">  
+        {isLoadingHistory ? (  
+          <div className="px-3 py-2 text-sm text-sidebar-foreground/70 text-center">  
+            Loading history…  
+          </div>  
+        ) : errorHistory ? (  
+          <div className="px-3 py-2 text-sm text-destructive text-center break-words">  
+            Error: {errorHistory.substring(0, 150)}{errorHistory.length > 150 && "..."}  
+            <Button variant="link" size="sm" onClick={refreshChatHistory} className="mt-1">  
+              Try again  
+            </Button>  
+          </div>  
+        ) : chatHistoryNavItems.length > 0 ? (  
+          chatHistoryNavItems.map((item) => <NavItemDisplay key={item.id} item={item} />)  
+        ) : (  
+          <div className="px-3 py-2 text-xs text-sidebar-foreground/60 italic">  
+            No chat history found.  
+          </div>  
+        )}  
+      </div>  
+    </div>  
+  );  
+}  --- app/components/sidebar-account.tsx ---
 // components/sidebar-account.tsx
 "use client";
 
@@ -1426,6 +1074,675 @@ export function SidebarAccount({ user, onLogout }: SidebarAccountProps) {
           </nav>
         </PopoverContent>
       </Popover>
+    </div>
+  );
+}--- app/components/chat/ModelSelector.tsx ---
+// app/components/chat/ModelSelector.tsx
+import { ChevronDownIcon, FileDownIcon } from 'lucide-react';
+import type { AIModelConfig } from '~/lib/ai-models'; // Adjust path as needed
+
+interface ModelSelectorProps {
+  models: AIModelConfig[];
+  selectedModel: AIModelConfig;
+  onModelChange: (model: AIModelConfig) => void;
+  disabled?: boolean;
+  className?: string; // Allow passing custom classes
+}
+
+export function ModelSelector({
+  models,
+  selectedModel,
+  onModelChange,
+  disabled,
+  className,
+}: ModelSelectorProps) {
+  const handleChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const selected = models.find(
+      (m) =>
+        m.model === event.target.value &&
+        m.provider ===
+          event.target.options[event.target.selectedIndex].dataset.provider
+    );
+    if (selected) {
+      onModelChange(selected);
+    }
+  };
+
+  return (
+    <div className={`inline-block relative ${className || ''}`}>
+      <select
+        value={selectedModel.model} // Ensure value matches one of the option values
+        onChange={handleChange}
+        disabled={disabled}
+        className="appearance-none text-xs font-medium bg-background hover:bg-muted border border-input rounded-md px-2.5 py-1.5 pr-7 focus:ring-1 focus:ring-primary focus:outline-none focus:border-primary disabled:opacity-70 disabled:cursor-not-allowed"
+      >
+        {models.map((model) => (
+          <option
+            key={`${model.provider}-${model.model}`}
+            value={model.model}
+            data-provider={model.provider}
+          >
+            {model.displayName}
+          </option>
+        ))}
+      </select>
+      <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1.5 text-muted-foreground">
+        <FileDownIcon className="h-3.5 w-3.5" />
+      </div>
+    </div>
+  );
+}--- app/components/chat/ChatInputBar.tsx ---
+import React, { useRef, useEffect } from 'react';
+import { ArrowUp, Paperclip, Settings2, ChevronDown } from 'lucide-react';
+import type { AIModelConfig } from '~/lib/ai-models'; // Ensure this path is correct
+import { isProbablyMobile } from '~/lib/utils'; // Ensure this path is correct
+
+interface ChatInputBarProps {
+  input: string;
+  onInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+  isLoading: boolean;
+  availableModels: AIModelConfig[];
+  selectedModel: AIModelConfig; // Assuming this is always a valid object (e.g., has a default)
+  onModelChange: (model: AIModelConfig) => void;
+}
+
+const MIN_TEXTAREA_HEIGHT_REM = 1.625;
+const TEXTAREA_PADDING_Y_PX = 20; // py-2.5 is 10px top + 10px bottom
+const MAX_TEXTAREA_HEIGHT_PX = 144; // From your previous example (max-h-36)
+
+export function ChatInputBar({
+  input,
+  onInputChange,
+  onSubmit,
+  isLoading,
+  availableModels,
+  selectedModel,
+  onModelChange,
+}: ChatInputBarProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = 'auto';
+      const scrollHeight = textarea.scrollHeight;
+      const newHeight = Math.min(scrollHeight, MAX_TEXTAREA_HEIGHT_PX);
+      textarea.style.height = `${newHeight}px`;
+    }
+  }, [input]);
+
+  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const mobile = isProbablyMobile();
+    if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey)) {
+      return; // Allow newline
+    }
+    if (mobile && e.key === 'Enter') {
+      return; // On mobile, Enter creates a newline by default
+    }
+    if (e.key === 'Enter' && !mobile) {
+      e.preventDefault();
+      if (!isLoading && (input || '').trim()) {
+        const form = e.currentTarget.form;
+        if (form) {
+          form.requestSubmit(); // Programmatically submit the form
+        }
+      }
+    }
+  };
+
+  const handleModelSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const modelIdentifier = e.target.value;
+    const provider = e.target.options[e.target.selectedIndex].dataset.provider;
+    const newSelectedModel = availableModels.find(
+      (m) => m.model === modelIdentifier && m.provider === provider
+    );
+    if (newSelectedModel) {
+      onModelChange(newSelectedModel);
+    }
+  };
+
+  const isSendDisabled = isLoading || !(input || '').trim();
+
+  return (
+    // This div is now a simple block element, taking full width of its parent.
+    // It's part of the normal page flow, not fixed.
+    // `flex-shrink-0` ensures it doesn't shrink if content above is large.
+    <div className="w-full flex-shrink-0">
+      <form
+        onSubmit={onSubmit}
+        // The form itself has the card styling and its own padding.
+        className="relative mx-auto flex w-full flex-col rounded-xl bg-card p-2.5 shadow-xl ring-1 ring-border sm:p-3"
+        // max-w-3xl can be applied here if you want the input bar itself to be narrower than ChatPageLayout's max-width
+        // For instance, if ChatPageLayout is max-w-4xl, input bar can be max-w-3xl within it.
+        // style={{ maxWidth: '768px' }} // Equivalent to max-w-3xl, if you want to enforce it here
+      >
+        <textarea
+          ref={textareaRef}
+          value={input || ''}
+          onChange={onInputChange}
+          onKeyDown={handleTextareaKeyDown}
+          placeholder={
+            selectedModel
+              ? `Ask ${selectedModel.displayName}...`
+              : 'Select a model...'
+          }
+          rows={1}
+          className="w-full resize-none overflow-y-auto rounded-lg border-none bg-transparent px-3 py-2.5 text-base text-foreground outline-none placeholder:text-muted-foreground focus:ring-0"
+          style={{
+            minHeight: `calc(${MIN_TEXTAREA_HEIGHT_REM}rem + ${TEXTAREA_PADDING_Y_PX}px)`, // approx 46px
+            maxHeight: `${MAX_TEXTAREA_HEIGHT_PX}px`,
+          }}
+          disabled={isLoading}
+          aria-label="Chat message input"
+        />
+        <div className="mt-2 flex items-center justify-between">
+          {/* Left controls: Model Selector */}
+          <div className="flex items-center gap-1.5">
+            <div className="relative">
+              <select
+                value={selectedModel?.model || ''} // Safely access model, handle if not immediately available
+                onChange={handleModelSelectChange}
+                disabled={isLoading || !availableModels || availableModels.length === 0}
+                className="appearance-none rounded-lg border border-input bg-background py-1.5 pl-3 pr-7 text-xs font-medium shadow-sm hover:border-primary focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-60"
+                aria-label="Select AI Model"
+              >
+                {(!availableModels || availableModels.length === 0) && (
+                  <option value="">Loading models...</option>
+                )}
+                {availableModels.map((m) => (
+                  <option
+                    key={`${m.provider}-${m.model}`}
+                    value={m.model}
+                    data-provider={m.provider}
+                  >
+                    {m.displayName}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            </div>
+          </div>
+          {/* Right controls: Action Buttons */}
+          <div className="flex items-center gap-1 sm:gap-1.5">
+            <button
+              type="button"
+              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => alert('Attach file - not implemented')}
+              disabled={true} // Explicitly disable if feature is not ready
+              title="Attach file (coming soon)"
+            >
+              <Paperclip size={18} strokeWidth={2} />
+            </button>
+            <button
+              type="button"
+              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => alert('Model settings - not implemented')}
+              disabled={true} // Explicitly disable if feature is not ready
+              title="Model options (coming soon)"
+            >
+              <Settings2 size={18} strokeWidth={2} />
+            </button>
+            <button
+              type="submit"
+              className="flex items-center justify-center rounded-lg bg-primary px-3 py-2 text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              // py-2 is 0.5rem padding. px-3 makes it slightly rectangular.
+              disabled={isSendDisabled}
+              title="Send message"
+            >
+              <ArrowUp size={20} strokeWidth={2.25} />
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+}--- app/components/chat/MessageList.tsx ---
+// app/components/chat/MessageList.tsx
+import { useEffect, useRef } from 'react';
+import type { Message } from './MessageItem'; // Ensure Message includes createdAt if used
+import { MessageItem } from './MessageItem';
+
+interface MessageListProps {
+  messages: Message[];
+  isLoading: boolean;
+}
+
+export function MessageList({ messages, isLoading }: MessageListProps) {
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    // Small timeout can help ensure DOM is fully updated, especially with streaming
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 50);
+  };
+
+  useEffect(() => {
+    // Scroll to bottom when new messages are added or loading state changes (e.g., assistant starts typing)
+    // Do not scroll if isLoading is true but the last message is not from the user (i.e., assistant is already typing from previous turn)
+    if (messages.length > 0) {
+        scrollToBottom();
+    }
+  }, [messages, isLoading]);
+
+
+  return (
+    // This div is now just for padding and message spacing.
+    // flex-grow and overflow-y-auto are handled by its parent in ChatPageLayout.
+    <div className="p-4 space-y-4">
+      {messages.map((msg) => (
+        <MessageItem key={msg.id} message={msg} />
+      ))}
+      {/* Typing indicator shown when isLoading and the last message was from the user */}
+      {isLoading && messages.length > 0 && messages[messages.length - 1]?.role === 'user' && (
+        <div className="flex justify-start mb-4">
+          <div className="max-w-[70%] p-3 rounded-lg shadow bg-muted">
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse"></div>
+              <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse delay-75"></div>
+              <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse delay-150"></div>
+            </div>
+          </div>
+        </div>
+      )}
+      <div ref={messagesEndRef} />
+    </div>
+  );
+}--- app/components/chat/InitialPrompts.tsx ---
+interface InitialPromptsProps {
+  onPromptSelect: (prompt: string) => void;
+}
+
+const suggestions = [
+  "What are the advantages of using Next.js?",
+  "Write code to demonstrate Dijkstra's algorithm",
+  "Help me write an essay about Silicon Valley",
+  "What is the weather in San Francisco?",
+];
+
+export function InitialPrompts({ onPromptSelect }: InitialPromptsProps) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full p-4">
+      <h1 className="text-3xl font-semibold mb-2">Hello there!</h1>
+      <p className="text-muted-foreground mb-8">How can I help you today?</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-xl">
+        {suggestions.map((prompt) => (
+          <button
+            key={prompt}
+            onClick={() => onPromptSelect(prompt)}
+            className="p-4 border rounded-lg hover:bg-muted text-left text-sm" // Basic styling
+          >
+            <p className="font-medium">{prompt.split(' ').slice(0, 5).join(' ')}{prompt.split(' ').length > 5 ? '...' : ''}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {prompt.startsWith("Write code") ? "Code generation" : 
+               prompt.startsWith("Help me write") ? "Writing assistance" : 
+               "General query"}
+            </p>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}--- app/components/chat/MessageItem.tsx ---
+export interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+interface MessageItemProps {
+  message: Message;
+}
+
+export function MessageItem({ message }: MessageItemProps) {
+  const isUser = message.role === 'user';
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
+      <div
+        className={`max-w-[100%] p-3 rounded-lg shadow ${
+          isUser
+            ? 'bg-primary text-primary-foreground'
+            : 'bg-muted'
+        }`}
+      >
+        {/* Basic markdown-like rendering for newlines */}
+        {message.content.split('\n').map((line, index) => (
+          <span key={index}>
+            {line}
+            {index < message.content.split('\n').length - 1 && <br />}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}--- app/components/chat/ChatPageLayout.tsx ---
+// app/components/ChatPageLayout.tsx (or wherever your ChatPageLayout is)
+import { useState, useEffect, useCallback, useRef, useTransition } from 'react';
+// If you want Remix's useTransition, use:
+// import { useTransition } from '@remix-run/react';
+import { useNavigate, useLocation } from '@remix-run/react';
+import type { Message } from './MessageItem'; // Adjust path if necessary
+import { MessageList } from './MessageList'; // Adjust path if necessary
+import { ChatInputBar } from './ChatInputBar'; // Adjust path if necessary
+import { InitialPrompts } from './InitialPrompts'; // Adjust path if necessary
+import {
+  AImodels,
+  defaultModelConfig,
+  defaultSystemPrompt,
+  API_STREAM_URL,
+} from '~/lib/ai-models'; // Adjust path if necessary
+import type { AIModelConfig } from '~/lib/ai-models'; // Adjust path if necessary
+
+interface ChatPageLayoutProps {
+  initialChatId: string | null;
+  initialMessages?: Message[];
+}
+
+export function ChatPageLayout({ initialChatId, initialMessages = [] }: ChatPageLayoutProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  // React 18's useTransition
+  const [isPending, startTransition] = useTransition();
+
+  const chatLayoutKey = initialChatId || 'new-chat-session';
+
+  const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const [input, setInput] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<AIModelConfig>(defaultModelConfig);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const messagesRef = useRef(messages);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    // Only reset messages if not streaming and initialMessages truly changed for the current chat
+    // This avoids resetting messages if initialMessages from loader is stale due to navigation state
+    if (!isStreaming && location.state?.fromNewChatFlow !== true) {
+      if (JSON.stringify(initialMessages) !== JSON.stringify(messagesRef.current.slice(0, initialMessages.length))) {
+        setMessages(initialMessages || []);
+      }
+    } else if (location.state?.fromNewChatFlow === true) {
+      // If navigated from new chat flow, messages are already set via state, clear the flag
+      // This assumes navigate state is cleared on subsequent navigations or reloads
+      const { state, ...rest } = location;
+      // @ts-ignore
+      const { fromNewChatFlow, ...newState } = state;
+      navigate(rest, { replace: true, state: Object.keys(newState).length > 0 ? newState : undefined });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMessages, chatLayoutKey]); // Removed isStreaming to allow initialMessages to update if chat ID changes
+
+
+  useEffect(() => {
+    // Abort any ongoing stream and reset state when chat context changes
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort("Chat context changed or component unmounting");
+      abortControllerRef.current = null;
+    }
+    setIsStreaming(false); // Ensure streaming is false
+    setInput(''); // Clear input
+
+    // Set messages based on initialMessages from loader for the *current* chat ID
+    // This effect runs when initialChatId changes, ensuring correct messages are loaded.
+    setMessages(initialMessages || []);
+
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort("Component unmounting or initialChatId changing");
+        abortControllerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialChatId]); // Depend only on initialChatId for resetting context
+
+  const handleSendMessage = useCallback(async (inputText: string, modelConfig: AIModelConfig) => {
+    if (isStreaming || isPending) return;
+
+    setIsStreaming(true);
+    setInput('');
+
+    const newUserMessage: Message = { id: crypto.randomUUID(), role: 'user', content: inputText };
+    setMessages(prev => [...prev, newUserMessage]);
+
+    const assistantMessageId = crypto.randomUUID();
+    setMessages(prev => [...prev, { id: assistantMessageId, role: 'assistant', content: '' }]);
+    const currentAbortController = new AbortController();
+    abortControllerRef.current = currentAbortController;
+    let chatIdForRequest = initialChatId;
+
+    let receivedChatIdFromStream: string | null = null;
+
+    try {
+      const response = await fetch(API_STREAM_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+        body: JSON.stringify({
+          chatId: chatIdForRequest,
+          message: inputText,
+          provider: modelConfig.provider,
+          model: modelConfig.model,
+          systemPrompt: defaultSystemPrompt,
+        }),
+        signal: currentAbortController.signal,
+        credentials: 'include',
+      });
+
+      if (currentAbortController.signal.aborted) return;
+      if (!response.ok || !response.body) {
+        const errorBody = await response.text().catch(() => "Failed to read error body");
+        throw new Error(`API Error ${response.status}: ${errorBody.slice(0, 500)}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (currentAbortController.signal.aborted || done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+
+          if (line.startsWith("data: ")) {
+            const jsonDataString = line.substring(5);
+            if (jsonDataString) {
+              if (currentAbortController.signal.aborted) break;
+              try {
+                const chunk = JSON.parse(jsonDataString);
+                if (chunk.type === "session_info" && chunk.chatId && !initialChatId) {
+                  receivedChatIdFromStream = chunk.chatId;
+                }
+                handleStreamData(chunk, assistantMessageId);
+              } catch (e) {
+                if (!currentAbortController.signal.aborted)
+                  console.error("Error parsing stream data JSON:", e, jsonDataString);
+              }
+            }
+          }
+        }
+      }
+
+      if (!initialChatId && receivedChatIdFromStream) {
+        // Important: messagesRef.current will have the latest messages *including the streamed response*
+        // because setMessages in handleStreamData updates it.
+        startTransition(() => {
+          navigate(`/chat/${receivedChatIdFromStream}`, {
+            replace: true,
+            state: { initialMessages: messagesRef.current, fromNewChatFlow: true }
+          });
+        });
+        // setIsStreaming(false) will effectively be handled by the component re-keying or unmounting/remounting
+        // due to navigation and change in initialChatId.
+      } else {
+        // If it's an existing chat or no chatId was received (should not happen for new chat success)
+        // ensure streaming state is properly turned off if not already done by stream_end.
+        // This check for abort is important here.
+        if (!currentAbortController.signal.aborted) {
+          setIsStreaming(false);
+        }
+      }
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        // Only update if the message doesn't already indicate abortion
+        setMessages(prev =>
+          prev.map(msg =>
+            msg.id === assistantMessageId && msg.role === 'assistant' && !msg.content.includes("[Stream aborted]")
+              ? { ...msg, content: (msg.content || "") + `\n[Stream aborted]` }
+              : msg
+          ));
+      } else {
+        console.error(`Send/Stream error:`, error);
+        handleStreamError(assistantMessageId, error.message || "Failed to get response.");
+      }
+    } finally {
+      if (abortControllerRef.current === currentAbortController) {
+        abortControllerRef.current = null;
+      }
+      // If the navigation didn't happen (e.g., existing chat) and stream wasn't aborted,
+      // ensure streaming is set to false. This is a fallback.
+      // However, if navigation happens, the component might unmount/re-key which resets state.
+      if (!receivedChatIdFromStream && !currentAbortController.signal.aborted) {
+        setIsStreaming(false);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialChatId, isStreaming, selectedModel, navigate, isPending, startTransition]);
+
+  const handleStreamData = (chunk: any, assistantMessageId: string) => {
+    // Check if the stream was aborted by a new action or component unmount
+    if (abortControllerRef.current?.signal.aborted && !isStreaming) {
+      // If isStreaming is false, it means the stream was likely ended or aborted intentionally
+      // and we should not process further data for this assistant message.
+      return;
+    }
+
+    if (chunk.content) {
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === assistantMessageId && msg.role === 'assistant'
+            ? { ...msg, content: msg.content + chunk.content }
+            : msg
+        )
+      );
+    } else if (chunk.type === 'usage_summary' || chunk.type === 'stream_end') {
+      // Only set isStreaming to false if the current abort controller is still active
+      // or if there's no active abort controller (implying natural end).
+      // This prevents race conditions if a new message was sent quickly.
+      if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) {
+        setIsStreaming(false);
+      }
+    } else if (chunk.error) {
+      handleStreamError(assistantMessageId, chunk.error.message || chunk.error);
+    }
+  };
+
+  const handleStreamError = (assistantMessageId: string, errorMessage: string) => {
+    setMessages(prev =>
+      prev.map(msg =>
+        msg.id === assistantMessageId && msg.role === 'assistant' && !msg.content.includes("[Error:")
+          ? { ...msg, content: (msg.content || "") + `\n[Error: ${errorMessage}]` }
+          : msg
+      )
+    );
+    // Ensure streaming is stopped on error, if not already aborted by a new request
+    if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) {
+      setIsStreaming(false);
+    }
+  };
+
+  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (input.trim() && !isStreaming && !isPending) {
+      handleSendMessage(input.trim(), selectedModel);
+    }
+  };
+
+  const handlePromptSelect = (promptText: string) => {
+    if (!isStreaming && !isPending) {
+      // Set input for immediate display, then send
+      setInput(promptText);
+      handleSendMessage(promptText, selectedModel);
+    }
+  };
+
+  const isNavigating = isPending; // useTransition's pending state
+  const displayInitialPrompts =
+    initialChatId === null &&
+    messages.length === 0 &&
+    !isStreaming &&
+    !input &&
+    !isNavigating;
+
+  // Use initialChatId for keying child components that depend on chat context
+  const childKey = initialChatId || "new-chat-internal";
+
+  return (
+    // Root div: takes full height and width from parent (AppLayout's main area)
+    // flex flex-col ensures children (message area and input bar) are stacked vertically
+    <div className="flex flex-col h-full w-full">
+
+      {/* Message List Area:
+          - flex-grow: takes up all available vertical space after input bar is accounted for.
+          - overflow-y-auto: enables vertical scrolling ONLY for this area.
+          - The scrollbar will appear on the right edge of THIS div.
+      */}
+      <div className="flex-grow overflow-y-auto">
+        {displayInitialPrompts ? (
+          // Container for InitialPrompts, centered within the scrollable area
+          // max-w-4xl mx-auto ensures content is centered horizontally
+          // h-full allows vertical centering content using flex
+          // p-4 for padding
+          <div className="max-w-4xl mx-auto w-full h-full flex flex-col justify-center items-center p-4">
+            <InitialPrompts onPromptSelect={handlePromptSelect} />
+          </div>
+        ) : (
+          // Container for MessageList
+          // max-w-4xl mx-auto ensures messages are centered horizontally
+          // w-full ensures it uses the available width up to max-w-4xl
+          // p-4 provides padding around the message list. Consider pb-0 if MessageList handles last item spacing.
+          <div className="max-w-4xl mx-auto w-full p-4">
+            <MessageList
+              key={`ml-${childKey}`} // Keyed to re-render if chat changes
+              messages={messages}
+              isLoading={isStreaming && !isNavigating} // Show loading indicator if streaming and not navigating away
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Chat Input Bar Area:
+          - flex-shrink-0: prevents this area from shrinking.
+          - bg-background, border-t, border-border: styling.
+      */}
+      <div className="flex-shrink-0 bg-background border-t border-border">
+        {/* Content wrapper for ChatInputBar:
+            - max-w-4xl mx-auto: centers the input bar content.
+            - w-full: ensures it takes full width up to max-w-4xl.
+            - p-2 md:p-3: original padding.
+        */}
+        <div className="max-w-4xl mx-auto w-full p-2 md:p-3">
+          <ChatInputBar
+            key={`cib-${childKey}`} // Keyed to re-render if chat changes
+            input={input}
+            onInputChange={e => setInput(e.target.value)}
+            onSubmit={handleFormSubmit}
+            isLoading={isStreaming || isNavigating} // Input disabled if streaming or navigating
+            availableModels={AImodels}
+            selectedModel={selectedModel}
+            onModelChange={setSelectedModel}
+          />
+        </div>
+      </div>
     </div>
   );
 }--- app/components/sidebar-header.tsx ---

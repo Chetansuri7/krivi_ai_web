@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "remix vite:build",
-    "dev": "remix vite:dev",
+    "dev": "remix vite:dev --host 0.0.0.0 --port 5173",
     "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
-    "start": "remix-serve ./build/server/index.js",
+    "start": "PORT=5200 node -r dotenv/config ./node_modules/.bin/remix-serve ./build/server/index.js",
     "typecheck": "tsc"
   },
   "dependencies": {
@@ -47,7 +47,9 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^3.6.0",
+    "dotenv": "^16.5.0",
     "embla-carousel-react": "^8.6.0",
+    "highlight.js": "^11.11.1",
     "input-otp": "^1.4.2",
     "isbot": "^4.1.0",
     "lucide-react": "^0.510.0",
@@ -57,8 +59,12 @@
     "react-dom": "^18.2.0",
     "react-hook-form": "^7.56.3",
     "react-icons": "^5.5.0",
+    "react-loading-indicators": "^1.0.1",
+    "react-markdown": "^10.1.0",
     "react-resizable-panels": "^3.0.2",
     "recharts": "^2.15.3",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
     "sonner": "^2.0.3",
     "tailwind-merge": "^3.3.0",
     "tslib": "^2.8.1",
@@ -68,6 +74,7 @@
   "devDependencies": {
     "@remix-run/dev": "^2.16.6",
     "@tailwindcss/typography": "^0.5.16",
+    "@types/highlight.js": "^9.12.4",
     "@types/react": "^18.2.20",
     "@types/react-dom": "^18.2.7",
     "@typescript-eslint/eslint-plugin": "^6.7.4",

@@ -1,0 +1,1867 @@
+
+---- app/components/chat/ModelSelector.tsx ----
+// app/components/chat/ModelSelector.tsx
+import { ChevronDownIcon, FileDownIcon } from 'lucide-react';
+import type { AIModelConfig } from '~/lib/ai-models'; // Adjust path as needed
+
+interface ModelSelectorProps {
+  models: AIModelConfig[];
+  selectedModel: AIModelConfig;
+  onModelChange: (model: AIModelConfig) => void;
+  disabled?: boolean;
+  className?: string; // Allow passing custom classes
+}
+
+export function ModelSelector({
+  models,
+  selectedModel,
+  onModelChange,
+  disabled,
+  className,
+}: ModelSelectorProps) {
+  const handleChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const selected = models.find(
+      (m) =>
+        m.model === event.target.value &&
+        m.provider ===
+          event.target.options[event.target.selectedIndex].dataset.provider
+    );
+    if (selected) {
+      onModelChange(selected);
+    }
+  };
+
+  return (
+    <div className={`inline-block relative ${className || ''}`}>
+      <select
+        value={selectedModel.model} // Ensure value matches one of the option values
+        onChange={handleChange}
+        disabled={disabled}
+        className="appearance-none text-xs font-medium bg-background hover:bg-muted border border-input rounded-md px-2.5 py-1.5 pr-7 focus:ring-1 focus:ring-primary focus:outline-none focus:border-primary disabled:opacity-70 disabled:cursor-not-allowed"
+      >
+        {models.map((model) => (
+          <option
+            key={`${model.provider}-${model.model}`}
+            value={model.model}
+            data-provider={model.provider}
+          >
+            {model.displayName}
+          </option>
+        ))}
+      </select>
+      <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1.5 text-muted-foreground">
+        <FileDownIcon className="h-3.5 w-3.5" />
+      </div>
+    </div>
+  );
+}
+---- app/components/chat/ChatInputBar.tsx ----
+// app/components/ChatInputBar.tsx
+import React, { useRef, useEffect } from 'react';
+import { ArrowUp, Paperclip, Settings2, ChevronDown as SelectChevronDown } from 'lucide-react'; // Renamed ChevronDown
+import type { AIModelConfig } from '~/lib/ai-models';
+// Assuming isProbablyMobile exists, if not, you can mock it or remove its usage for this stub
+const isProbablyMobile = () => typeof window !== 'undefined' && window.innerWidth < 768;
+
+
+interface ChatInputBarProps {
+input: string;
+onInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
+onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+isLoading: boolean;
+availableModels: AIModelConfig[];
+selectedModel: AIModelConfig;
+onModelChange: (model: AIModelConfig) => void;
+}
+
+const MIN_TEXTAREA_HEIGHT_REM = 1.625;
+const TEXTAREA_PADDING_Y_PX = 20;
+const MAX_TEXTAREA_HEIGHT_PX = 144;
+
+export function ChatInputBar({
+input,
+onInputChange,
+onSubmit,
+isLoading,
+availableModels,
+selectedModel,
+onModelChange,
+}: ChatInputBarProps) {
+const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+    textarea.style.height = 'auto';
+    const scrollHeight = textarea.scrollHeight;
+    const newHeight = Math.min(scrollHeight, MAX_TEXTAREA_HEIGHT_PX);
+    textarea.style.height = `${newHeight}px`;
+    }
+}, [input]);
+
+const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const mobile = isProbablyMobile();
+    if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey)) return;
+    if (mobile && e.key === 'Enter') return;
+    if (e.key === 'Enter' && !mobile) {
+    e.preventDefault();
+    if (!isLoading && (input || '').trim()) {
+        const form = e.currentTarget.form;
+        if (form) form.requestSubmit();
+    }
+    }
+};
+
+const handleModelSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const modelIdentifier = e.target.value;
+    const provider = e.target.options[e.target.selectedIndex].dataset.provider;
+    const newSelectedModel = availableModels.find(
+    (m) => m.model === modelIdentifier && m.provider === provider
+    );
+    if (newSelectedModel) onModelChange(newSelectedModel);
+};
+
+const isSendDisabled = isLoading || !(input || '').trim();
+
+return (
+    <div className="w-full flex-shrink-0">
+    <form
+        onSubmit={onSubmit}
+        className="relative mx-auto flex w-full flex-col rounded-xl bg-card p-2.5 shadow-xl ring-1 ring-border sm:p-3"
+    >
+        <textarea
+        ref={textareaRef}
+        value={input || ''}
+        onChange={onInputChange}
+        onKeyDown={handleTextareaKeyDown}
+        placeholder={selectedModel ? `Ask ${selectedModel.displayName}...` : 'Select a model...'}
+        rows={1}
+        className="w-full resize-none overflow-y-auto rounded-lg border-none bg-transparent px-3 py-2.5 text-base text-foreground outline-none placeholder:text-muted-foreground focus:ring-0"
+        style={{
+            minHeight: `calc(${MIN_TEXTAREA_HEIGHT_REM}rem + ${TEXTAREA_PADDING_Y_PX}px)`,
+            maxHeight: `${MAX_TEXTAREA_HEIGHT_PX}px`,
+        }}
+        disabled={isLoading}
+        aria-label="Chat message input"
+        />
+        <div className="mt-2 flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+            <div className="relative">
+            <select
+                value={selectedModel?.model || ''}
+                onChange={handleModelSelectChange}
+                disabled={isLoading || !availableModels || availableModels.length === 0}
+                className="appearance-none rounded-lg border border-input bg-background py-1.5 pl-3 pr-7 text-xs font-medium shadow-sm hover:border-primary focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-60"
+                aria-label="Select AI Model"
+            >
+                {(!availableModels || availableModels.length === 0) && (<option value="">Loading...</option>)}
+                {availableModels.map((m) => (
+                <option key={`${m.provider}-${m.model}`} value={m.model} data-provider={m.provider}>
+                    {m.displayName}
+                </option>
+                ))}
+            </select>
+            <SelectChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            </div>
+        </div>
+        <div className="flex items-center gap-1 sm:gap-1.5">
+            <button type="button" className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:opacity-50" disabled={true} title="Attach file (soon)">
+            <Paperclip size={18} strokeWidth={2} />
+            </button>
+            <button type="button" className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:opacity-50" disabled={true} title="Model options (soon)">
+            <Settings2 size={18} strokeWidth={2} />
+            </button>
+            <button type="submit" className="flex items-center justify-center rounded-lg bg-primary px-3 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={isSendDisabled} title="Send message">
+            <ArrowUp size={20} strokeWidth={2.25} />
+            </button>
+        </div>
+        </div>
+    </form>
+    </div>
+);
+}
+---- app/components/chat/MessageList.tsx ----
+// app/components/MessageList.tsx
+import type { RefObject } from 'react';
+import type { Message } from './MessageItem'; // Assuming MessageItem exports Message type
+import { MessageItem } from './MessageItem';
+
+interface MessageListProps {
+messages: Message[];
+isLoading: boolean; // For assistant typing indicator
+isInitialHistoryLoading?: boolean;
+scrollEndRef: RefObject<HTMLDivElement>;
+}
+
+export function MessageList({
+messages,
+isLoading,
+isInitialHistoryLoading = false,
+scrollEndRef,
+}: MessageListProps) {
+return (
+    <div className="p-4 space-y-4"> {/* Ensure this padding is desired, or remove if MessageItem handles it */}
+    {messages.map((msg) => (
+        <MessageItem key={msg.id} message={msg} />
+    ))}
+    {isLoading && messages.length > 0 && messages[messages.length - 1]?.role === 'user' && (
+        <div className="flex justify-start mb-4"> {/* Assistant typing indicator */}
+        <div className="max-w-[70%] p-3 rounded-lg shadow bg-muted">
+            <div className="flex items-center space-x-2">
+            <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse"></div>
+            <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse delay-75"></div>
+            <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse delay-150"></div>
+            </div>
+        </div>
+        </div>
+    )}
+    <div ref={scrollEndRef} style={{ height: '1px' }} />
+    </div>
+);
+}
+---- app/components/chat/InitialPrompts.tsx ----
+interface InitialPromptsProps {
+  onPromptSelect: (prompt: string) => void;
+}
+
+const suggestions = [
+  "What are the advantages of using Next.js?",
+  "Write code to demonstrate Dijkstra's algorithm",
+  "Help me write an essay about Silicon Valley",
+  "What is the weather in San Francisco?",
+];
+
+export function InitialPrompts({ onPromptSelect }: InitialPromptsProps) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full p-4">
+      <h1 className="text-3xl font-semibold mb-2">Hello there!</h1>
+      <p className="text-muted-foreground mb-8">How can I help you today?</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-xl">
+        {suggestions.map((prompt) => (
+          <button
+            key={prompt}
+            onClick={() => onPromptSelect(prompt)}
+            className="p-4 border rounded-lg hover:bg-muted text-left text-sm" // Basic styling
+          >
+            <p className="font-medium">{prompt.split(' ').slice(0, 5).join(' ')}{prompt.split(' ').length > 5 ? '...' : ''}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {prompt.startsWith("Write code") ? "Code generation" : 
+               prompt.startsWith("Help me write") ? "Writing assistance" : 
+               "General query"}
+            </p>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+---- app/components/chat/MessageItem.tsx ----
+import React from 'react';  
+import { Markdown } from '../Markdown';  
+  
+export interface Message {  
+  id: string;  
+  role: 'user' | 'assistant';  
+  content: string;  
+}  
+  
+interface MessageItemProps {  
+  message: Message;  
+}  
+  
+export function MessageItem({ message }: MessageItemProps) {  
+  const isUser = message.role === 'user';  
+  return (  
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-1`}>  
+      <div  
+        className={`  
+          max-w-[100%] md:max-w-[100%]  
+          px-3 rounded-lg shadow break-words  
+          prose prose-sm md:prose-base dark:prose-invert  
+          ${isUser  
+            ? 'bg-primary text-primary-foreground'  
+            : 'bg-muted text-foreground'  
+          }  
+          ${isUser ? 'prose-primary-invert' : ''}  
+        `}  
+      >  
+        {/* Use the Markdown component to render content */}  
+        <Markdown>{message.content}</Markdown>  
+      </div>  
+    </div>  
+  );  
+}  
+---- app/components/chat/ChatPageLayout.tsx ----
+// app/components/chat/ChatPageLayout.tsx  
+import { useState, useEffect, useCallback, useRef, useTransition as useReactTransitionHook } from 'react';  
+import { useNavigate, useLocation, useNavigation } from '@remix-run/react';  
+import type { Message } from './MessageItem'; // Ensure this path is correct  
+import { MessageList } from './MessageList'; // Ensure this path is correct  
+import { ChatInputBar } from './ChatInputBar'; // Ensure this path is correct  
+import { InitialPrompts } from './InitialPrompts'; // Ensure this path is correct  
+import {  
+  AImodels,  
+  defaultModelConfig,  
+  defaultSystemPrompt,  
+  API_STREAM_URL,  
+} from '~/lib/ai-models'; // Ensure this path is correct  
+import type { AIModelConfig } from '~/lib/ai-models'; // Ensure this path is correct  
+import { FourSquare } from 'react-loading-indicators';  
+import { ChevronDown } from 'lucide-react';  
+import { useScrollToBottom } from '~/hooks/useScrollToBottom';  
+  
+type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';  
+  
+interface ChatPageLayoutProps {  
+  initialChatId: string | null;  
+  initialMessages?: Message[];  
+}  
+  
+export function ChatPageLayout({  
+  initialChatId,  
+  initialMessages = [],  
+}: ChatPageLayoutProps) {  
+  const navigate = useNavigate();  
+  const location = useLocation();  
+  const remixNavigation = useNavigation();  
+  const [isReactTransitionPending, startReactTransition] = useReactTransitionHook();  
+  
+  const [messages, setMessages] = useState<Message[]>([]);  
+  const [input, setInput] = useState('');  
+  const [isStreaming, setIsStreaming] = useState(false);  
+  const [selectedModel, setSelectedModel] = useState<AIModelConfig>(defaultModelConfig);  
+  const [chatPhase, setChatPhase] = useState<ChatLoadingPhase>('READY');  
+  
+  const abortControllerRef = useRef<AbortController | null>(null);  
+  const messagesRef = useRef(messages); // Ref to current messages for use in navigate state  
+  const activeChatContextIdRef = useRef<string | null | symbol>(Symbol('initial_unprocessed_ref_state'));  
+  
+  const {  
+    containerRef,  
+    endRef,  
+    showScrollDownButton,  
+    scrollToBottom,  
+  } = useScrollToBottom();  
+  
+  useEffect(() => {  
+    messagesRef.current = messages;  
+  }, [messages]);  
+  
+  useEffect(() => {  
+    const newContextTargetId = initialChatId;  
+    const navState = location.state as { fromNewChatFlow?: boolean; initialMessages?: Message[] } | null;  
+    let shouldScrollOnLoad = false;  
+  
+    if (  
+      navState?.fromNewChatFlow &&  
+      navState.initialMessages &&  
+      initialChatId &&  
+      initialChatId === activeChatContextIdRef.current  
+    ) {  
+      setMessages(navState.initialMessages);  
+      setChatPhase('READY');  
+      shouldScrollOnLoad = true;  
+      startReactTransition(() => {  
+        const { state, ...restOfLocation } = location;  
+        // @ts-ignore  
+        const { fromNewChatFlow, initialMessages: _im, ...newStateWithoutFlow } = state || {};  
+        navigate(restOfLocation, {  
+          replace: true,  
+          state: Object.keys(newStateWithoutFlow).length > 0 ? newStateWithoutFlow : undefined  
+        });  
+      });  
+    } else if (newContextTargetId !== activeChatContextIdRef.current) {  
+      activeChatContextIdRef.current = newContextTargetId;  
+      if (abortControllerRef.current) {  
+        abortControllerRef.current.abort("Chat context changed");  
+        abortControllerRef.current = null;  
+      }  
+      setIsStreaming(false);  
+      setInput('');  
+      setMessages([]);  
+  
+      if (newContextTargetId) {  
+        setChatPhase('INITIALIZING');  
+        // Scroll will happen in Effect 3 after PREPARING_CONTENT  
+      } else {  
+        setMessages(initialMessages || []);  
+        setChatPhase('READY');  
+        shouldScrollOnLoad = true;  
+      }  
+    }  
+  
+    if (shouldScrollOnLoad) {  
+      requestAnimationFrame(() => scrollToBottom('auto'));  
+    }  
+    // eslint-disable-next-line react-hooks/exhaustive-deps  
+  }, [initialChatId, location.state, navigate]); // scrollToBottom is stable  
+  
+  useEffect(() => {  
+    if (  
+      chatPhase === 'INITIALIZING' &&  
+      initialChatId &&  
+      activeChatContextIdRef.current === initialChatId  
+    ) {  
+      setMessages(initialMessages || []);  
+      setChatPhase('PREPARING_CONTENT');  
+    }  
+    // eslint-disable-next-line react-hooks/exhaustive-deps  
+  }, [chatPhase, initialMessages, initialChatId]);  
+  
+  useEffect(() => {  
+    if (  
+      chatPhase === 'PREPARING_CONTENT' &&  
+      activeChatContextIdRef.current === initialChatId  
+    ) {  
+      startReactTransition(() => {  
+        setChatPhase('READY');  
+        requestAnimationFrame(() => scrollToBottom('auto'));  
+      });  
+    }  
+    // eslint-disable-next-line react-hooks/exhaustive-deps  
+  }, [messages, chatPhase, initialChatId]); // scrollToBottom is stable  
+  
+  useEffect(() => {  
+    return () => {  
+      if (abortControllerRef.current) {  
+        abortControllerRef.current.abort("Component unmounting");  
+        abortControllerRef.current = null;  
+      }  
+    };  
+  }, []);  
+  
+  const handleSendMessage = useCallback(  
+    async (inputText: string, modelConfig: AIModelConfig) => {  
+      if (isStreaming || isReactTransitionPending || chatPhase !== 'READY') return;  
+      if (initialChatId && activeChatContextIdRef.current !== initialChatId) return;  
+  
+      setIsStreaming(true);  
+      const currentInput = input || inputText; // Prefer state input if handlePromptSelect didn't set it  
+      setInput('');  
+  
+      // ADD 'timestamp' ONLY IF YOUR Message type has timestamp? (see MessageItem.tsx)  
+      const newUserMessage: Message = {  
+        id: crypto.randomUUID(),  
+        role: 'user',  
+        content: currentInput.trim(),  
+      };  
+      setMessages(prev => [...prev, newUserMessage]);  
+  
+      const assistantMessageId = crypto.randomUUID();  
+      setMessages(prev =>  
+        [...prev,  
+        {  
+          id: assistantMessageId,  
+          role: 'assistant',  
+          content: '',  
+          timestamp: Date.now(),  
+        }]  
+      );  
+  
+      const currentAbortController = new AbortController();  
+      abortControllerRef.current = currentAbortController;  
+      const chatIdForRequest = initialChatId;  
+      let receivedChatIdFromStream: string | null = null;  
+  
+      try {  
+        const response = await fetch(API_STREAM_URL, {  
+          method: 'POST',  
+          headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },  
+          body: JSON.stringify({  
+            chatId: chatIdForRequest,  
+            message: currentInput.trim(),  
+            provider: modelConfig.provider,  
+            model: modelConfig.model,  
+            systemPrompt: defaultSystemPrompt,  
+          }),  
+          signal: currentAbortController.signal,  
+          credentials: 'include',  
+        });  
+  
+        if (currentAbortController.signal.aborted) return;  
+        if (!response.ok || !response.body) {  
+          const errorBody = await response.text().catch(() => "Failed to read error body");  
+          throw new Error(`API Error ${response.status}: ${errorBody.slice(0, 500)}`);  
+        }  
+  
+        const reader = response.body.getReader();  
+        const decoder = new TextDecoder();  
+        let buffer = "";  
+        // eslint-disable-next-line no-constant-condition  
+        while (true) {  
+          const { done, value } = await reader.read();  
+          if (currentAbortController.signal.aborted || done) break;  
+          buffer += decoder.decode(value, { stream: true });  
+          let newlineIndex;  
+          while ((newlineIndex = buffer.indexOf('\n')) >= 0) {  
+            const line = buffer.slice(0, newlineIndex).trim();  
+            buffer = buffer.slice(newlineIndex + 1);  
+            if (line.startsWith("data: ")) {  
+              const jsonDataString = line.substring(5);  
+              if (jsonDataString && !currentAbortController.signal.aborted) {  
+                try {  
+                  const chunk = JSON.parse(jsonDataString);  
+                  if (chunk.type === "session_info" && chunk.chatId && !chatIdForRequest) {  
+                    receivedChatIdFromStream = chunk.chatId;  
+                  }  
+                  handleStreamData(chunk, assistantMessageId);  
+                } catch (e) {  
+                  if (!currentAbortController.signal.aborted) console.error("Error parsing stream data JSON:", e, jsonDataString);  
+                }  
+              }  
+            }  
+          }  
+        }  
+  
+        if (!chatIdForRequest && receivedChatIdFromStream) {  
+          activeChatContextIdRef.current = receivedChatIdFromStream;  
+          startReactTransition(() => {  
+            navigate(`/chat/${receivedChatIdFromStream}`, {  
+              replace: true,  
+              state: { initialMessages: messagesRef.current, fromNewChatFlow: true }  
+            });  
+          });  
+        } else if (!currentAbortController.signal.aborted) {  
+          setIsStreaming(false);  
+        }  
+      } catch (error: any) {  
+        if (  
+          currentAbortController.signal.aborted ||  
+          error.name === 'AbortError'  
+        ) {  
+          if (  
+            !messagesRef.current.find(m => m.id === assistantMessageId)?.content?.includes("[Stream aborted]")  
+          ) {  
+            setMessages(prev =>  
+              prev.map(  
+                msg =>  
+                  msg.id === assistantMessageId && msg.role === 'assistant'  
+                    ? {  
+                      ...msg,  
+                      content: (msg.content || "") + `\n[Stream aborted]`  
+                    }  
+                    : msg  
+              )  
+            );  
+          }  
+        } else {  
+          console.error(`[handleSendMessage] Send/Stream error:`, error);  
+          handleStreamError(assistantMessageId, error.message || "Failed to get response.");  
+        }  
+        // Ensure streaming is false if not navigating away and an error occurred or aborted  
+        if (  
+          !receivedChatIdFromStream || error  
+        ) {  
+          if (  
+            !currentAbortController.signal.aborted ||  
+            (abortControllerRef.current === currentAbortController || !abortControllerRef.current)  
+          ) {  
+            setIsStreaming(false);  
+          }  
+        }  
+      } finally {  
+        if (abortControllerRef.current === currentAbortController) {  
+          abortControllerRef.current = null;  
+        }  
+      }  
+    },  
+    [initialChatId, isStreaming, selectedModel, navigate, isReactTransitionPending, chatPhase, startReactTransition, input]  
+  );  
+  
+  const handleStreamData = (chunk: any, assistantMessageId: string) => {  
+    if (abortControllerRef.current?.signal.aborted && !isStreaming) return;  
+    if (chunk.content) {  
+      setMessages(prev =>  
+        prev.map(  
+          msg =>  
+            msg.id === assistantMessageId && msg.role === 'assistant'  
+              ? { ...msg, content: msg.content + chunk.content }  
+              : msg  
+        )  
+      );  
+    } else if (chunk.type === 'usage_summary' || chunk.type === 'stream_end') {  
+      if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) setIsStreaming(false);  
+    } else if (chunk.error) {  
+      handleStreamError(assistantMessageId, chunk.error.message || chunk.error);  
+      if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) setIsStreaming(false);  
+    }  
+  };  
+  
+  const handleStreamError = (assistantMessageId: string, errorMessage: string) => {  
+    setMessages(prev =>  
+      prev.map(  
+        msg =>  
+          msg.id === assistantMessageId &&  
+          msg.role === 'assistant' &&  
+          !msg.content.includes("[Error:")  
+            ? {  
+              ...msg,  
+              content: (msg.content || "") + `\n[Error: ${errorMessage.slice(0, 100)}...]`  
+            }  
+            : msg  
+      )  
+    );  
+    if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) setIsStreaming(false);  
+  };  
+  
+  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {  
+    e.preventDefault();  
+    if (input.trim() && chatPhase === 'READY' && !isStreaming && !isReactTransitionPending) {  
+      handleSendMessage(input.trim(), selectedModel);  
+    }  
+  };  
+  
+  const handlePromptSelect = (promptText: string) => {  
+    if (chatPhase === 'READY' && !isStreaming && !isReactTransitionPending) {  
+      setInput(promptText); // Set input state  
+      handleSendMessage(promptText, selectedModel);  
+    }  
+  };  
+  
+  const isRemixNavigating = remixNavigation.state !== 'idle';  
+  const showPageLoader =  
+    chatPhase !== 'READY' || isRemixNavigating || isReactTransitionPending;  
+  const displayInitialPrompts =  
+    initialChatId === null &&  
+    messages.length === 0 &&  
+    !isStreaming &&  
+    !input &&  
+    chatPhase === 'READY';  
+  const showMessageAreaContent =  
+    chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending;  
+  const childKey = initialChatId || "new-chat-session";  
+  
+  return (  
+    <div className="flex flex-col h-full w-full">  
+      <div ref={containerRef} className="flex-grow overflow-y-auto overflow-x-hidden relative">  
+        {showPageLoader && (  
+          <div className="absolute inset-0 flex flex-col justify-center items-center bg-background/80 backdrop-blur-sm z-20 p-4 text-center">  
+            <FourSquare color="hsl(var(--primary))" size="medium" />  
+            <p className="mt-4 text-sm text-foreground">  
+              {isRemixNavigating  
+                ? "Navigating..."  
+                : isReactTransitionPending  
+                ? "Processing..."  
+                : chatPhase === 'INITIALIZING'  
+                ? "Initializing chat..."  
+                : chatPhase === 'PREPARING_CONTENT'  
+                ? "Loading messages..."  
+                : "Loading..."}  
+            </p>  
+          </div>  
+        )}  
+        <div  
+          style={{  
+            opacity: showMessageAreaContent ? 1 : 0,  
+            pointerEvents: showMessageAreaContent ? 'auto' : 'none',  
+            transition: 'opacity 0.2s ease-in-out',  
+            minHeight: '100%', display: 'flex', flexDirection: 'column',  
+          }}  
+        >  
+          {displayInitialPrompts ? (  
+            <div className="max-w-5xl mx-auto w-full h-full flex flex-col justify-center items-center p-4 flex-grow">  
+              <InitialPrompts onPromptSelect={handlePromptSelect} />  
+            </div>  
+          ) : (  
+            <div className="max-w-4xl mx-auto w-full">  
+              <MessageList  
+                key={`ml-${childKey}`}  
+                messages={messages}  
+                isLoading={isStreaming && chatPhase === 'READY'}  
+                isInitialHistoryLoading={chatPhase === 'PREPARING_CONTENT'}  
+                scrollEndRef={endRef}  
+              />  
+            </div>  
+          )}  
+        </div>  
+        {showScrollDownButton && (  
+          <button  
+            onClick={() => scrollToBottom('smooth')}  
+            className="absolute left-1/2 -translate-x-1/2 bottom-4 z-10 p-2 bg-card border border-border rounded-full shadow-lg hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background transition-all duration-150 ease-in-out animate-fade-in"  
+            aria-label="Scroll to latest messages"  
+            title="Scroll to latest messages"  
+            style={{ minWidth: 44, minHeight: 44 }} // for better mobile tap area  
+          >  
+            <ChevronDown className="h-5 w-5 text-foreground" />  
+          </button>  
+        )}  
+      </div>  
+      <div className="flex-shrink-0 bg-background border-t border-border">  
+        <div className="max-w-4xl mx-auto w-full p-2 md:p-3">  
+          <ChatInputBar  
+            key={`cib-${childKey}`}  
+            input={input}  
+            onInputChange={e => setInput(e.target.value)}  
+            onSubmit={handleFormSubmit}  
+            isLoading={  
+              chatPhase !== 'READY' ||  
+              isStreaming ||  
+              isRemixNavigating ||  
+              isReactTransitionPending  
+            }  
+            availableModels={AImodels}  
+            selectedModel={selectedModel}  
+            onModelChange={setSelectedModel}  
+          />  
+        </div>  
+      </div>  
+    </div>  
+  );  
+}  
+---- app/components/chat/ChatPageLayout copy.tsx ----
+// app/components/ChatPageLayout.tsx (or wherever your ChatPageLayout is)
+import { useState, useEffect, useCallback, useRef, useTransition } from 'react';
+// If you want Remix's useTransition, use:
+// import { useTransition } from '@remix-run/react';
+import { useNavigate, useLocation } from '@remix-run/react';
+import type { Message } from './MessageItem'; // Adjust path if necessary
+import { MessageList } from './MessageList'; // Adjust path if necessary
+import { ChatInputBar } from './ChatInputBar'; // Adjust path if necessary
+import { InitialPrompts } from './InitialPrompts'; // Adjust path if necessary
+import {
+  AImodels,
+  defaultModelConfig,
+  defaultSystemPrompt,
+  API_STREAM_URL,
+} from '~/lib/ai-models'; // Adjust path if necessary
+import type { AIModelConfig } from '~/lib/ai-models'; // Adjust path if necessary
+
+interface ChatPageLayoutProps {
+  initialChatId: string | null;
+  initialMessages?: Message[];
+}
+
+export function ChatPageLayout({ initialChatId, initialMessages = [] }: ChatPageLayoutProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  // React 18's useTransition
+  const [isPending, startTransition] = useTransition();
+
+  const chatLayoutKey = initialChatId || 'new-chat-session';
+
+  const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const [input, setInput] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<AIModelConfig>(defaultModelConfig);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const messagesRef = useRef(messages);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    // Only reset messages if not streaming and initialMessages truly changed for the current chat
+    // This avoids resetting messages if initialMessages from loader is stale due to navigation state
+    if (!isStreaming && location.state?.fromNewChatFlow !== true) {
+      if (JSON.stringify(initialMessages) !== JSON.stringify(messagesRef.current.slice(0, initialMessages.length))) {
+        setMessages(initialMessages || []);
+      }
+    } else if (location.state?.fromNewChatFlow === true) {
+      // If navigated from new chat flow, messages are already set via state, clear the flag
+      // This assumes navigate state is cleared on subsequent navigations or reloads
+      const { state, ...rest } = location;
+      // @ts-ignore
+      const { fromNewChatFlow, ...newState } = state;
+      navigate(rest, { replace: true, state: Object.keys(newState).length > 0 ? newState : undefined });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMessages, chatLayoutKey]); // Removed isStreaming to allow initialMessages to update if chat ID changes
+
+
+  useEffect(() => {
+    // Abort any ongoing stream and reset state when chat context changes
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort("Chat context changed or component unmounting");
+      abortControllerRef.current = null;
+    }
+    setIsStreaming(false); // Ensure streaming is false
+    setInput(''); // Clear input
+
+    // Set messages based on initialMessages from loader for the *current* chat ID
+    // This effect runs when initialChatId changes, ensuring correct messages are loaded.
+    setMessages(initialMessages || []);
+
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort("Component unmounting or initialChatId changing");
+        abortControllerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialChatId]); // Depend only on initialChatId for resetting context
+
+  const handleSendMessage = useCallback(async (inputText: string, modelConfig: AIModelConfig) => {
+    if (isStreaming || isPending) return;
+
+    setIsStreaming(true);
+    setInput('');
+
+    const newUserMessage: Message = { id: crypto.randomUUID(), role: 'user', content: inputText };
+    setMessages(prev => [...prev, newUserMessage]);
+
+    const assistantMessageId = crypto.randomUUID();
+    setMessages(prev => [...prev, { id: assistantMessageId, role: 'assistant', content: '' }]);
+    const currentAbortController = new AbortController();
+    abortControllerRef.current = currentAbortController;
+    let chatIdForRequest = initialChatId;
+
+    let receivedChatIdFromStream: string | null = null;
+
+    try {
+      const response = await fetch(API_STREAM_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+        body: JSON.stringify({
+          chatId: chatIdForRequest,
+          message: inputText,
+          provider: modelConfig.provider,
+          model: modelConfig.model,
+          systemPrompt: defaultSystemPrompt,
+        }),
+        signal: currentAbortController.signal,
+        credentials: 'include',
+      });
+
+      if (currentAbortController.signal.aborted) return;
+      if (!response.ok || !response.body) {
+        const errorBody = await response.text().catch(() => "Failed to read error body");
+        throw new Error(`API Error ${response.status}: ${errorBody.slice(0, 500)}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (currentAbortController.signal.aborted || done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+
+          if (line.startsWith("data: ")) {
+            const jsonDataString = line.substring(5);
+            if (jsonDataString) {
+              if (currentAbortController.signal.aborted) break;
+              try {
+                const chunk = JSON.parse(jsonDataString);
+                if (chunk.type === "session_info" && chunk.chatId && !initialChatId) {
+                  receivedChatIdFromStream = chunk.chatId;
+                }
+                handleStreamData(chunk, assistantMessageId);
+              } catch (e) {
+                if (!currentAbortController.signal.aborted)
+                  console.error("Error parsing stream data JSON:", e, jsonDataString);
+              }
+            }
+          }
+        }
+      }
+
+      if (!initialChatId && receivedChatIdFromStream) {
+        // Important: messagesRef.current will have the latest messages *including the streamed response*
+        // because setMessages in handleStreamData updates it.
+        startTransition(() => {
+          navigate(`/chat/${receivedChatIdFromStream}`, {
+            replace: true,
+            state: { initialMessages: messagesRef.current, fromNewChatFlow: true }
+          });
+        });
+        // setIsStreaming(false) will effectively be handled by the component re-keying or unmounting/remounting
+        // due to navigation and change in initialChatId.
+      } else {
+        // If it's an existing chat or no chatId was received (should not happen for new chat success)
+        // ensure streaming state is properly turned off if not already done by stream_end.
+        // This check for abort is important here.
+        if (!currentAbortController.signal.aborted) {
+          setIsStreaming(false);
+        }
+      }
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        // Only update if the message doesn't already indicate abortion
+        setMessages(prev =>
+          prev.map(msg =>
+            msg.id === assistantMessageId && msg.role === 'assistant' && !msg.content.includes("[Stream aborted]")
+              ? { ...msg, content: (msg.content || "") + `\n[Stream aborted]` }
+              : msg
+          ));
+      } else {
+        console.error(`Send/Stream error:`, error);
+        handleStreamError(assistantMessageId, error.message || "Failed to get response.");
+      }
+    } finally {
+      if (abortControllerRef.current === currentAbortController) {
+        abortControllerRef.current = null;
+      }
+      // If the navigation didn't happen (e.g., existing chat) and stream wasn't aborted,
+      // ensure streaming is set to false. This is a fallback.
+      // However, if navigation happens, the component might unmount/re-key which resets state.
+      if (!receivedChatIdFromStream && !currentAbortController.signal.aborted) {
+        setIsStreaming(false);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialChatId, isStreaming, selectedModel, navigate, isPending, startTransition]);
+
+  const handleStreamData = (chunk: any, assistantMessageId: string) => {
+    // Check if the stream was aborted by a new action or component unmount
+    if (abortControllerRef.current?.signal.aborted && !isStreaming) {
+      // If isStreaming is false, it means the stream was likely ended or aborted intentionally
+      // and we should not process further data for this assistant message.
+      return;
+    }
+
+    if (chunk.content) {
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === assistantMessageId && msg.role === 'assistant'
+            ? { ...msg, content: msg.content + chunk.content }
+            : msg
+        )
+      );
+    } else if (chunk.type === 'usage_summary' || chunk.type === 'stream_end') {
+      // Only set isStreaming to false if the current abort controller is still active
+      // or if there's no active abort controller (implying natural end).
+      // This prevents race conditions if a new message was sent quickly.
+      if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) {
+        setIsStreaming(false);
+      }
+    } else if (chunk.error) {
+      handleStreamError(assistantMessageId, chunk.error.message || chunk.error);
+    }
+  };
+
+  const handleStreamError = (assistantMessageId: string, errorMessage: string) => {
+    setMessages(prev =>
+      prev.map(msg =>
+        msg.id === assistantMessageId && msg.role === 'assistant' && !msg.content.includes("[Error:")
+          ? { ...msg, content: (msg.content || "") + `\n[Error: ${errorMessage}]` }
+          : msg
+      )
+    );
+    // Ensure streaming is stopped on error, if not already aborted by a new request
+    if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) {
+      setIsStreaming(false);
+    }
+  };
+
+  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (input.trim() && !isStreaming && !isPending) {
+      handleSendMessage(input.trim(), selectedModel);
+    }
+  };
+
+  const handlePromptSelect = (promptText: string) => {
+    if (!isStreaming && !isPending) {
+      // Set input for immediate display, then send
+      setInput(promptText);
+      handleSendMessage(promptText, selectedModel);
+    }
+  };
+
+  const isNavigating = isPending; // useTransition's pending state
+  const displayInitialPrompts =
+    initialChatId === null &&
+    messages.length === 0 &&
+    !isStreaming &&
+    !input &&
+    !isNavigating;
+
+  // Use initialChatId for keying child components that depend on chat context
+  const childKey = initialChatId || "new-chat-internal";
+
+  return (
+    // Root div: takes full height and width from parent (AppLayout's main area)
+    // flex flex-col ensures children (message area and input bar) are stacked vertically
+    <div className="flex flex-col h-full w-full">
+
+      {/* Message List Area:
+          - flex-grow: takes up all available vertical space after input bar is accounted for.
+          - overflow-y-auto: enables vertical scrolling ONLY for this area.
+          - The scrollbar will appear on the right edge of THIS div.
+      */}
+      <div className="flex-grow overflow-y-auto">
+        {displayInitialPrompts ? (
+          // Container for InitialPrompts, centered within the scrollable area
+          // max-w-4xl mx-auto ensures content is centered horizontally
+          // h-full allows vertical centering content using flex
+          // p-4 for padding
+          <div className="max-w-4xl mx-auto w-full h-full flex flex-col justify-center items-center p-4">
+            <InitialPrompts onPromptSelect={handlePromptSelect} />
+          </div>
+        ) : (
+          // Container for MessageList
+          // max-w-4xl mx-auto ensures messages are centered horizontally
+          // w-full ensures it uses the available width up to max-w-4xl
+          // p-4 provides padding around the message list. Consider pb-0 if MessageList handles last item spacing.
+          <div className="max-w-4xl mx-auto w-full p-4">
+            <MessageList
+              key={`ml-${childKey}`} // Keyed to re-render if chat changes
+              messages={messages}
+              isLoading={isStreaming && !isNavigating} // Show loading indicator if streaming and not navigating away
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Chat Input Bar Area:
+          - flex-shrink-0: prevents this area from shrinking.
+          - bg-background, border-t, border-border: styling.
+      */}
+      <div className="flex-shrink-0 bg-background border-t border-border">
+        {/* Content wrapper for ChatInputBar:
+            - max-w-4xl mx-auto: centers the input bar content.
+            - w-full: ensures it takes full width up to max-w-4xl.
+            - p-2 md:p-3: original padding.
+        */}
+        <div className="max-w-4xl mx-auto w-full p-2 md:p-3">
+          <ChatInputBar
+            key={`cib-${childKey}`} // Keyed to re-render if chat changes
+            input={input}
+            onInputChange={e => setInput(e.target.value)}
+            onSubmit={handleFormSubmit}
+            isLoading={isStreaming || isNavigating} // Input disabled if streaming or navigating
+            availableModels={AImodels}
+            selectedModel={selectedModel}
+            onModelChange={setSelectedModel}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+---- app/routes/__app.tsx ----
+// app/routes/__app.tsx    
+import type { LoaderFunctionArgs } from "@remix-run/node";  
+import { json } from "@remix-run/node";  
+import { Outlet, useLoaderData } from "@remix-run/react";  
+  
+import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";  
+import { AppSidebar } from "~/components/app-sidebar";  
+import { SidebarProvider, SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";  
+import type { NavItem } from "~/components/sidebar-nav";  
+import { Separator } from "~/components/ui/separator";  
+  
+export interface AppLoaderData {  
+  user: AuthenticatedUserDetails;  
+  appName: string;  
+  mainNavItems: NavItem[];  
+}  
+  
+export async function loader({ request }: LoaderFunctionArgs) {  
+  await requireAuth(request);  
+  // Provide only dummy data, until real user API is available  
+  return json<AppLoaderData>({  
+    user: {  
+      id: "dummy",  
+      name: "Dummy",  
+      email: "dummy@example.com",  
+      avatar_url: "/avatars/default.png",  
+    },  
+    appName: "Krivi AI",  
+    mainNavItems: [],  
+  });  
+}  
+  
+  
+export default function AppLayout() {  
+  const { user, appName, mainNavItems } = useLoaderData<typeof loader>();  
+  const sidebarUser = {  
+    name: user.name,  
+    email: user.email,  
+    avatar: "/avatars/default.png",  
+  };  
+  
+  return (  
+    <SidebarProvider>  
+      <AppSidebar  
+        user={sidebarUser}  
+        appName={appName}  
+        mainNav={mainNavItems}  
+      />  
+      {/* This inset is the "main section" right of the sidebar */}  
+      <SidebarInset>  
+        {/* COLUMN FLEX for main app area */}  
+        <div className="relative flex flex-col h-[100dvh] min-h-0 w-full"> {/* The main column, taking whole viewport height */}  
+          {/* Fixed topbar: stays always at the top inside the app area */}  
+          <header className="sticky top-0 left-0 right-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background">  
+            <div className="flex items-center gap-2 px-4">  
+              <SidebarTrigger className="-ml-1" />  
+              <Separator orientation="vertical" className="mr-2 h-4 bg-border" />  
+            </div>  
+          </header>  
+  
+          {/* Main body below topbar, flexes to fill available height */}  
+          <main className="relative flex-1 min-h-0 w-full flex flex-col">  
+            {/* render whatever the route wants (in your case, ChatPageLayout)  
+                 Make sure ChatPageLayout uses the available height!! */}  
+            <Outlet />  
+          </main>  
+        </div>  
+      </SidebarInset>  
+    </SidebarProvider>  
+  );  
+}  
+---- app/routes/__app.chat.$chatId.tsx ----
+// app/routes/__app.chat.$chatId.tsx
+import { useLoaderData, useLocation } from "@remix-run/react"; // Added useLocation
+import { json, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { requireAuth } from "~/lib/auth.server";
+import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
+import type { Message } from "~/components/chat/MessageItem";
+import { API_HISTORY_URL_BASE } from "~/lib/ai-models";
+
+export const meta: MetaFunction = ({ params }) => [{ title: `Chat ${params.chatId ? `- ${params.chatId.substring(0,8)}` : ''} | Krivi AI` }];
+
+interface LoaderData {
+  chatId: string;
+  initialMessages: Message[];
+  error?: string;
+  fromNewChatFlow?: boolean; // From navigation state
+}
+
+export async function loader({ request, params }: LoaderFunctionArgs): Promise<ReturnType<typeof json<LoaderData>>> {
+  await requireAuth(request);
+  const chatId = params.chatId;
+
+  if (!chatId) {
+    throw new Response("Chat ID missing", { status: 400 });
+  }
+
+  // Check if this load is due to navigation from a new chat flow (see ChatPageLayout navigate state)
+  // In a real app, you might get `location.state` on the client, but loader runs on server.
+  // The `fromNewChatFlow` flag is more illustrative for client-side logic post-load.
+  // For the loader, we always try to fetch history if a chatId is present.
+  // The client can then decide whether to use loader messages or state messages.
+
+  let messagesFromHistory: Message[] = [];
+  const historyUrl = `${API_HISTORY_URL_BASE}${chatId}/history?limit=50`;
+
+  try {
+    const response = await fetch(historyUrl, {
+      method: 'GET',
+      headers: { 'Cookie': request.headers.get('Cookie') || '' },
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.messages && Array.isArray(data.messages)) {
+        messagesFromHistory = data.messages.map((msg: any) => ({
+          id: msg.id || crypto.randomUUID(), role: msg.role, content: msg.content, createdAt: msg.createdAt,
+        }));
+      }
+    } else {
+      // ... (error handling as before)
+      console.error(`Failed to fetch chat history for ${chatId}: ${response.status}`);
+      return json({ chatId, initialMessages: [], error: `Failed to load history: ${response.status}` });
+    }
+  } catch (error: any) {
+    // ... (error handling as before)
+    console.error(`Error fetching chat history for ${chatId}:`, error);
+    return json({ chatId, initialMessages: [], error: `Error loading chat: ${error.message}` });
+  }
+  return json({ chatId, initialMessages: messagesFromHistory });
+}
+
+export default function ChatWithIdPage() {
+  const loaderData = useLoaderData<LoaderData>();
+  const location = useLocation(); // Get location to access state
+
+  // Prefer messages from navigation state if it's from the new chat flow.
+  // This provides a smoother UX by showing the already typed messages immediately.
+  const messagesFromState = (location.state as { initialMessages?: Message[], fromNewChatFlow?: boolean })?.initialMessages;
+  const isFromNewChatFlow = (location.state as { fromNewChatFlow?: boolean })?.fromNewChatFlow;
+  
+  const finalInitialMessages = (isFromNewChatFlow && messagesFromState && messagesFromState.length > 0) 
+                               ? messagesFromState 
+                               : loaderData.initialMessages;
+
+  // When navigating between different chat IDs, `loaderData.chatId` will change.
+  // This change in prop to `ChatPageLayout` triggers its internal useEffect for cleanup/reset.
+  // We also KEY ChatPageLayout by `loaderData.chatId` to ensure a full re-mount
+  // when switching between different existing chats. This is a robust way to reset all child state.
+  return (
+    <ChatPageLayout
+      key={loaderData.chatId} // CRITICAL: Re-mounts ChatPageLayout when navigating between different chat IDs
+      initialChatId={loaderData.chatId}
+      initialMessages={finalInitialMessages}
+    />
+  );
+}
+---- app/routes/login.tsx ----
+// app/routes/login.tsx
+import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
+import { useLoaderData, useSearchParams } from "@remix-run/react";
+import { FaGoogle } from "react-icons/fa";
+
+import { Button } from "~/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "~/components/ui/card";
+import {
+  checkAuth,
+  refreshTokens,
+  isAuthenticated,
+  isRefreshable,
+  type AuthStatus, // Type import is fine from .server files
+} from "~/lib/auth.server";
+import { getApiUrl } from "~/lib/api.config"; // Import getApiUrl from client-safe config
+import { useIsMobile } from "~/hooks/use-mobile";
+
+export const meta: MetaFunction = () => {
+  return [{ title: "Sign In" }];
+};
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url);
+  const responseHeaders = new Headers();
+
+  let authStatus = await checkAuth(request);
+
+  if (isRefreshable(authStatus)) {
+    console.log("[Login Loader] Token refresh required. Attempting refresh...");
+    const { ok, setCookieHeader } = await refreshTokens(request);
+    if (ok && setCookieHeader) {
+      responseHeaders.append("Set-Cookie", setCookieHeader);
+      const destination = url.pathname + url.search;
+      console.log(`[Login Loader] Refresh successful. Redirecting to ${destination} to apply new cookies.`);
+      throw redirect(destination, { headers: responseHeaders });
+    }
+    authStatus = await checkAuth(request); // Re-check auth after failed refresh
+    console.log("[Login Loader] Refresh failed or no cookies set. New auth status:", authStatus.status);
+  }
+
+  if (isAuthenticated(authStatus)) {
+    const next = url.searchParams.get("next") || "/"; // Default to app's root
+    console.log(`[Login Loader] User already authenticated. Redirecting to: ${next}`);
+    throw redirect(next, { headers: responseHeaders });
+  }
+
+  return json({ authStatus }, { headers: responseHeaders });
+}
+
+export default function LoginPage() {  
+  const { authStatus } = useLoaderData<typeof loader>();  
+  const [searchParams] = useSearchParams();  
+  const isMobile = useIsMobile();  
+  
+  const googleLoginUrl = getApiUrl("GOOGLE_LOGIN");  
+  const nextParam = searchParams.get("next");  
+  const finalGoogleLoginUrl = nextParam  
+    ? `${googleLoginUrl}?final_redirect_path=${encodeURIComponent(nextParam)}`  
+    : googleLoginUrl;  
+  
+  // User-friendly error translation  
+  const ERROR_MESSAGES: Record<string, string | undefined> = {  
+    session_terminated: "Your session has been terminated. Please sign in again.",  
+    invalid_or_expired_tokens: "Your session is invalid or has expired. Please sign in again.",  
+    auth_check_failed: "Something went wrong. Please try signing in again.",  
+    // add other codes as needed  
+  };  
+  
+  let displayMessage = searchParams.get("message");  
+  let errorReason = searchParams.get("error_description") || searchParams.get("error");  
+  
+  if (!displayMessage && !errorReason && authStatus) {  
+    if (authStatus.status === "login_required") {  
+      errorReason = ERROR_MESSAGES[authStatus.reason] ?? "";  
+    } else if (authStatus.status === "error") {  
+      errorReason = ERROR_MESSAGES[authStatus.reason ?? ""] ?? "Something went wrong. Please try signing in again.";  
+    }  
+  }  
+  
+  // Never show technical/unknown or empty codes to user  
+  if (  
+    !errorReason ||  
+    ["no_tokens_present", "auth_check_failed", "error", "login_required"].includes(errorReason)  
+  ) {  
+    errorReason = "";  
+  }  
+  
+  return (  
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">  
+      <Card className="w-full max-w-md shadow-xl">  
+        <CardHeader className="text-center">  
+          <CardTitle className="text-3xl font-bold tracking-tight text-primary">  
+            Access Your Account  
+          </CardTitle>  
+          <CardDescription className="text-muted-foreground pt-2">  
+            Continue with Google to securely sign in.  
+          </CardDescription>  
+        </CardHeader>  
+        <CardContent className="space-y-6 pt-6">  
+          {errorReason && (  
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">  
+              <p>{errorReason}</p>  
+            </div>  
+          )}  
+          {displayMessage && !errorReason && (  
+            <div className="rounded-md border border-primary/50 bg-primary/10 p-3 text-center text-sm text-primary">  
+              <p>{displayMessage}</p>  
+            </div>  
+          )}  
+          <Button  
+            asChild  
+            size={isMobile ? "lg" : "lg"}  
+            className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-lg py-6"  
+          >  
+            <a href={finalGoogleLoginUrl} className="flex items-center justify-center gap-3">  
+              <FaGoogle className="h-5 w-5" />  
+              Sign in with Google  
+            </a>  
+          </Button>  
+        </CardContent>  
+        <CardFooter className="flex-col items-center text-center pt-6">  
+          <p className="text-xs text-muted-foreground">  
+            By proceeding, you agree to our Terms of Service and Privacy Policy.  
+          </p>  
+        </CardFooter>  
+      </Card>  
+    </div>  
+  );  
+}  
+---- app/routes/__app._index.tsx ----
+// app/routes/__app._index.tsx
+import { useLoaderData } from "@remix-run/react";
+import { json, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { requireAuth } from "~/lib/auth.server";
+import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
+import type { Message } from "~/components/chat/MessageItem"; // Adjust path
+
+export const meta: MetaFunction = () => [{ title: "New Chat | Krivi AI" }];
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAuth(request);
+  // For a new chat at the app root, initialChatId is null.
+  // No initial messages unless we implement "restore unsaved new chat" later.
+  return json({ initialChatId: null, initialMessages: [] });
+}
+
+export default function AppRootNewChatPage() {
+  const { initialChatId, initialMessages } = useLoaderData<{ 
+    initialChatId: null; 
+    initialMessages: Message[]; 
+  }>();
+
+  // Crucially, ChatPageLayout itself is NOT keyed here.
+  // Its internal logic handles the "new chat" state based on initialChatId being null.
+  return <ChatPageLayout initialChatId={initialChatId} initialMessages={initialMessages} />;
+}
+---- app/hooks/use-mobile.tsx ----
+import * as React from "react"
+
+const MOBILE_BREAKPOINT = 768
+
+export function useIsMobile() {
+  const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined)
+
+  React.useEffect(() => {
+    // Ensure window is defined (for SSR safety, though matchMedia is client-only)
+    if (typeof window === 'undefined') {
+      setIsMobile(false); // Default for server or non-browser env
+      return;
+    }
+
+    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
+    const onChange = () => {
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
+    }
+    // Add listener
+    mql.addEventListener("change", onChange)
+    // Set initial state
+    setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
+    // Clean up listener
+    return () => mql.removeEventListener("change", onChange)
+  }, [])
+
+  return !!isMobile
+}
+---- app/hooks/useScrollToBottom.ts ----
+// app/hooks/useScrollToBottom.ts  
+  
+import { useRef, useState, useEffect, useCallback } from 'react';  
+  
+const INTERSECTION_THRESHOLD_PX = 50;  
+const USER_SCROLL_DEBOUNCE_MS = 150;  
+const MIN_SCROLL_FOR_BUTTON_PX = 10;  
+  
+export function useScrollToBottom() {  
+  const containerRef = useRef<HTMLDivElement | null>(null);  
+  const endRef = useRef<HTMLDivElement | null>(null);  
+  
+  const [isAtBottom, setIsAtBottom] = useState(true);  
+  const [showScrollDownButton, setShowScrollDownButton] = useState(false);  
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);  
+  
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {  
+    const scrollableContainer = containerRef.current;  
+    const bottomMarker = endRef.current;  
+  
+    if (bottomMarker) {  
+      bottomMarker.scrollIntoView({ behavior });  
+    } else if (scrollableContainer) {  
+      scrollableContainer.scrollTo({  
+        top: scrollableContainer.scrollHeight,  
+        behavior,  
+      });  
+    }  
+    setIsAtBottom(true);  
+    setShowScrollDownButton(false);  
+  }, []);  
+  
+  useEffect(() => {  
+    const scrollableContainer = containerRef.current;  
+    const bottomMarker = endRef.current;  
+  
+    if (!scrollableContainer || !bottomMarker) {  
+      setIsAtBottom(true);  
+      setShowScrollDownButton(false);  
+      return;  
+    }  
+  
+    const observer = new IntersectionObserver(  
+      ([entry]) => {  
+        const isCurrentlyIntersecting = entry.isIntersecting;  
+        setIsAtBottom(isCurrentlyIntersecting);  
+        // FIX: Always show the button if not at bottom, don't require scrolled some distance from top  
+        setShowScrollDownButton(!isCurrentlyIntersecting);  
+      },  
+      {  
+        root: scrollableContainer,  
+        rootMargin: `0px 0px ${INTERSECTION_THRESHOLD_PX}px 0px`,  
+        threshold: 0.01,  
+      }  
+    );  
+    observer.observe(bottomMarker);  
+  
+    if (  
+      scrollableContainer.scrollHeight > scrollableContainer.clientHeight &&  
+      scrollableContainer.scrollTop + scrollableContainer.clientHeight < scrollableContainer.scrollHeight - INTERSECTION_THRESHOLD_PX  
+    ) {  
+      setIsAtBottom(false);  
+      // FIX: Always show the button if not at bottom  
+      setShowScrollDownButton(true);  
+    } else {  
+      setIsAtBottom(true);  
+      setShowScrollDownButton(false);  
+    }  
+  
+    return () => {  
+      observer.unobserve(bottomMarker);  
+      observer.disconnect();  
+    };  
+  }, [containerRef, endRef]);  
+  
+  useEffect(() => {  
+    const scrollableContainer = containerRef.current;  
+    if (!scrollableContainer) return;  
+  
+    const handleScroll = () => {  
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);  
+      scrollTimeoutRef.current = setTimeout(() => {  
+        if (scrollableContainer) {  
+          const { scrollTop, scrollHeight, clientHeight } = scrollableContainer;  
+          const isNearBottom =  
+            scrollHeight - scrollTop - clientHeight <  
+            INTERSECTION_THRESHOLD_PX + 5;  
+          // FIX: Always show the button if not near bottom  
+          if (!isNearBottom) {  
+            if (!showScrollDownButton) setShowScrollDownButton(true);  
+            if (isAtBottom) setIsAtBottom(false);  
+          } else if (isNearBottom) {  
+            if (showScrollDownButton) setShowScrollDownButton(false);  
+            if (!isAtBottom) setIsAtBottom(true);  
+          } else {  
+            if (showScrollDownButton) setShowScrollDownButton(false);  
+          }  
+        }  
+      }, USER_SCROLL_DEBOUNCE_MS);  
+    };  
+  
+    scrollableContainer.addEventListener('scroll', handleScroll, { passive: true });  
+    return () => {  
+      scrollableContainer.removeEventListener('scroll', handleScroll);  
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);  
+    };  
+  }, [containerRef, showScrollDownButton, isAtBottom]);  
+  
+  return {  
+    containerRef,  
+    endRef,  
+    isAtBottom,  
+    showScrollDownButton,  
+    scrollToBottom,  
+  };  
+}  
+---- app/routes/__app.tsx ----
+// app/routes/__app.tsx    
+import type { LoaderFunctionArgs } from "@remix-run/node";  
+import { json } from "@remix-run/node";  
+import { Outlet, useLoaderData } from "@remix-run/react";  
+  
+import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";  
+import { AppSidebar } from "~/components/app-sidebar";  
+import { SidebarProvider, SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";  
+import type { NavItem } from "~/components/sidebar-nav";  
+import { Separator } from "~/components/ui/separator";  
+  
+export interface AppLoaderData {  
+  user: AuthenticatedUserDetails;  
+  appName: string;  
+  mainNavItems: NavItem[];  
+}  
+  
+export async function loader({ request }: LoaderFunctionArgs) {  
+  await requireAuth(request);  
+  // Provide only dummy data, until real user API is available  
+  return json<AppLoaderData>({  
+    user: {  
+      id: "dummy",  
+      name: "Dummy",  
+      email: "dummy@example.com",  
+      avatar_url: "/avatars/default.png",  
+    },  
+    appName: "Krivi AI",  
+    mainNavItems: [],  
+  });  
+}  
+  
+  
+export default function AppLayout() {  
+  const { user, appName, mainNavItems } = useLoaderData<typeof loader>();  
+  const sidebarUser = {  
+    name: user.name,  
+    email: user.email,  
+    avatar: "/avatars/default.png",  
+  };  
+  
+  return (  
+    <SidebarProvider>  
+      <AppSidebar  
+        user={sidebarUser}  
+        appName={appName}  
+        mainNav={mainNavItems}  
+      />  
+      {/* This inset is the "main section" right of the sidebar */}  
+      <SidebarInset>  
+        {/* COLUMN FLEX for main app area */}  
+        <div className="relative flex flex-col h-[100dvh] min-h-0 w-full"> {/* The main column, taking whole viewport height */}  
+          {/* Fixed topbar: stays always at the top inside the app area */}  
+          <header className="sticky top-0 left-0 right-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background">  
+            <div className="flex items-center gap-2 px-4">  
+              <SidebarTrigger className="-ml-1" />  
+              <Separator orientation="vertical" className="mr-2 h-4 bg-border" />  
+            </div>  
+          </header>  
+  
+          {/* Main body below topbar, flexes to fill available height */}  
+          <main className="relative flex-1 min-h-0 w-full flex flex-col">  
+            {/* render whatever the route wants (in your case, ChatPageLayout)  
+                 Make sure ChatPageLayout uses the available height!! */}  
+            <Outlet />  
+          </main>  
+        </div>  
+      </SidebarInset>  
+    </SidebarProvider>  
+  );  
+}  
+---- app/routes/__app.chat.$chatId.tsx ----
+// app/routes/__app.chat.$chatId.tsx
+import { useLoaderData, useLocation } from "@remix-run/react"; // Added useLocation
+import { json, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { requireAuth } from "~/lib/auth.server";
+import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
+import type { Message } from "~/components/chat/MessageItem";
+import { API_HISTORY_URL_BASE } from "~/lib/ai-models";
+
+export const meta: MetaFunction = ({ params }) => [{ title: `Chat ${params.chatId ? `- ${params.chatId.substring(0,8)}` : ''} | Krivi AI` }];
+
+interface LoaderData {
+  chatId: string;
+  initialMessages: Message[];
+  error?: string;
+  fromNewChatFlow?: boolean; // From navigation state
+}
+
+export async function loader({ request, params }: LoaderFunctionArgs): Promise<ReturnType<typeof json<LoaderData>>> {
+  await requireAuth(request);
+  const chatId = params.chatId;
+
+  if (!chatId) {
+    throw new Response("Chat ID missing", { status: 400 });
+  }
+
+  // Check if this load is due to navigation from a new chat flow (see ChatPageLayout navigate state)
+  // In a real app, you might get `location.state` on the client, but loader runs on server.
+  // The `fromNewChatFlow` flag is more illustrative for client-side logic post-load.
+  // For the loader, we always try to fetch history if a chatId is present.
+  // The client can then decide whether to use loader messages or state messages.
+
+  let messagesFromHistory: Message[] = [];
+  const historyUrl = `${API_HISTORY_URL_BASE}${chatId}/history?limit=50`;
+
+  try {
+    const response = await fetch(historyUrl, {
+      method: 'GET',
+      headers: { 'Cookie': request.headers.get('Cookie') || '' },
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.messages && Array.isArray(data.messages)) {
+        messagesFromHistory = data.messages.map((msg: any) => ({
+          id: msg.id || crypto.randomUUID(), role: msg.role, content: msg.content, createdAt: msg.createdAt,
+        }));
+      }
+    } else {
+      // ... (error handling as before)
+      console.error(`Failed to fetch chat history for ${chatId}: ${response.status}`);
+      return json({ chatId, initialMessages: [], error: `Failed to load history: ${response.status}` });
+    }
+  } catch (error: any) {
+    // ... (error handling as before)
+    console.error(`Error fetching chat history for ${chatId}:`, error);
+    return json({ chatId, initialMessages: [], error: `Error loading chat: ${error.message}` });
+  }
+  return json({ chatId, initialMessages: messagesFromHistory });
+}
+
+export default function ChatWithIdPage() {
+  const loaderData = useLoaderData<LoaderData>();
+  const location = useLocation(); // Get location to access state
+
+  // Prefer messages from navigation state if it's from the new chat flow.
+  // This provides a smoother UX by showing the already typed messages immediately.
+  const messagesFromState = (location.state as { initialMessages?: Message[], fromNewChatFlow?: boolean })?.initialMessages;
+  const isFromNewChatFlow = (location.state as { fromNewChatFlow?: boolean })?.fromNewChatFlow;
+  
+  const finalInitialMessages = (isFromNewChatFlow && messagesFromState && messagesFromState.length > 0) 
+                               ? messagesFromState 
+                               : loaderData.initialMessages;
+
+  // When navigating between different chat IDs, `loaderData.chatId` will change.
+  // This change in prop to `ChatPageLayout` triggers its internal useEffect for cleanup/reset.
+  // We also KEY ChatPageLayout by `loaderData.chatId` to ensure a full re-mount
+  // when switching between different existing chats. This is a robust way to reset all child state.
+  return (
+    <ChatPageLayout
+      key={loaderData.chatId} // CRITICAL: Re-mounts ChatPageLayout when navigating between different chat IDs
+      initialChatId={loaderData.chatId}
+      initialMessages={finalInitialMessages}
+    />
+  );
+}
+---- app/routes/login.tsx ----
+// app/routes/login.tsx
+import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
+import { useLoaderData, useSearchParams } from "@remix-run/react";
+import { FaGoogle } from "react-icons/fa";
+
+import { Button } from "~/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "~/components/ui/card";
+import {
+  checkAuth,
+  refreshTokens,
+  isAuthenticated,
+  isRefreshable,
+  type AuthStatus, // Type import is fine from .server files
+} from "~/lib/auth.server";
+import { getApiUrl } from "~/lib/api.config"; // Import getApiUrl from client-safe config
+import { useIsMobile } from "~/hooks/use-mobile";
+
+export const meta: MetaFunction = () => {
+  return [{ title: "Sign In" }];
+};
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url);
+  const responseHeaders = new Headers();
+
+  let authStatus = await checkAuth(request);
+
+  if (isRefreshable(authStatus)) {
+    console.log("[Login Loader] Token refresh required. Attempting refresh...");
+    const { ok, setCookieHeader } = await refreshTokens(request);
+    if (ok && setCookieHeader) {
+      responseHeaders.append("Set-Cookie", setCookieHeader);
+      const destination = url.pathname + url.search;
+      console.log(`[Login Loader] Refresh successful. Redirecting to ${destination} to apply new cookies.`);
+      throw redirect(destination, { headers: responseHeaders });
+    }
+    authStatus = await checkAuth(request); // Re-check auth after failed refresh
+    console.log("[Login Loader] Refresh failed or no cookies set. New auth status:", authStatus.status);
+  }
+
+  if (isAuthenticated(authStatus)) {
+    const next = url.searchParams.get("next") || "/"; // Default to app's root
+    console.log(`[Login Loader] User already authenticated. Redirecting to: ${next}`);
+    throw redirect(next, { headers: responseHeaders });
+  }
+
+  return json({ authStatus }, { headers: responseHeaders });
+}
+
+export default function LoginPage() {  
+  const { authStatus } = useLoaderData<typeof loader>();  
+  const [searchParams] = useSearchParams();  
+  const isMobile = useIsMobile();  
+  
+  const googleLoginUrl = getApiUrl("GOOGLE_LOGIN");  
+  const nextParam = searchParams.get("next");  
+  const finalGoogleLoginUrl = nextParam  
+    ? `${googleLoginUrl}?final_redirect_path=${encodeURIComponent(nextParam)}`  
+    : googleLoginUrl;  
+  
+  // User-friendly error translation  
+  const ERROR_MESSAGES: Record<string, string | undefined> = {  
+    session_terminated: "Your session has been terminated. Please sign in again.",  
+    invalid_or_expired_tokens: "Your session is invalid or has expired. Please sign in again.",  
+    auth_check_failed: "Something went wrong. Please try signing in again.",  
+    // add other codes as needed  
+  };  
+  
+  let displayMessage = searchParams.get("message");  
+  let errorReason = searchParams.get("error_description") || searchParams.get("error");  
+  
+  if (!displayMessage && !errorReason && authStatus) {  
+    if (authStatus.status === "login_required") {  
+      errorReason = ERROR_MESSAGES[authStatus.reason] ?? "";  
+    } else if (authStatus.status === "error") {  
+      errorReason = ERROR_MESSAGES[authStatus.reason ?? ""] ?? "Something went wrong. Please try signing in again.";  
+    }  
+  }  
+  
+  // Never show technical/unknown or empty codes to user  
+  if (  
+    !errorReason ||  
+    ["no_tokens_present", "auth_check_failed", "error", "login_required"].includes(errorReason)  
+  ) {  
+    errorReason = "";  
+  }  
+  
+  return (  
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">  
+      <Card className="w-full max-w-md shadow-xl">  
+        <CardHeader className="text-center">  
+          <CardTitle className="text-3xl font-bold tracking-tight text-primary">  
+            Access Your Account  
+          </CardTitle>  
+          <CardDescription className="text-muted-foreground pt-2">  
+            Continue with Google to securely sign in.  
+          </CardDescription>  
+        </CardHeader>  
+        <CardContent className="space-y-6 pt-6">  
+          {errorReason && (  
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">  
+              <p>{errorReason}</p>  
+            </div>  
+          )}  
+          {displayMessage && !errorReason && (  
+            <div className="rounded-md border border-primary/50 bg-primary/10 p-3 text-center text-sm text-primary">  
+              <p>{displayMessage}</p>  
+            </div>  
+          )}  
+          <Button  
+            asChild  
+            size={isMobile ? "lg" : "lg"}  
+            className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-lg py-6"  
+          >  
+            <a href={finalGoogleLoginUrl} className="flex items-center justify-center gap-3">  
+              <FaGoogle className="h-5 w-5" />  
+              Sign in with Google  
+            </a>  
+          </Button>  
+        </CardContent>  
+        <CardFooter className="flex-col items-center text-center pt-6">  
+          <p className="text-xs text-muted-foreground">  
+            By proceeding, you agree to our Terms of Service and Privacy Policy.  
+          </p>  
+        </CardFooter>  
+      </Card>  
+    </div>  
+  );  
+}  
+---- app/routes/__app._index.tsx ----
+// app/routes/__app._index.tsx
+import { useLoaderData } from "@remix-run/react";
+import { json, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { requireAuth } from "~/lib/auth.server";
+import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
+import type { Message } from "~/components/chat/MessageItem"; // Adjust path
+
+export const meta: MetaFunction = () => [{ title: "New Chat | Krivi AI" }];
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAuth(request);
+  // For a new chat at the app root, initialChatId is null.
+  // No initial messages unless we implement "restore unsaved new chat" later.
+  return json({ initialChatId: null, initialMessages: [] });
+}
+
+export default function AppRootNewChatPage() {
+  const { initialChatId, initialMessages } = useLoaderData<{ 
+    initialChatId: null; 
+    initialMessages: Message[]; 
+  }>();
+
+  // Crucially, ChatPageLayout itself is NOT keyed here.
+  // Its internal logic handles the "new chat" state based on initialChatId being null.
+  return <ChatPageLayout initialChatId={initialChatId} initialMessages={initialMessages} />;
+}
+---- app/lib/ai-models.ts ----
+// app/lib/ai-models.ts
+export interface AIModelConfig {
+  displayName: string;
+  model: string;
+  provider: string;
+  isDefault?: boolean; // Optional: useful for selecting default
+}
+
+export const AImodels: AIModelConfig[] = [
+  {
+    displayName: "GPT-4o Mini",
+    model: "gpt-4o-mini",
+    provider: "azure"
+  },
+  {
+    displayName: "Gemini 2.5 flash", // Updated display name to match model version (optional, adjust as needed)
+    model: "gemini-2.5-flash-preview-04-17", // From your example payload
+    provider: "google",
+    isDefault: true, // Marking this as default as per your previous defaultModelConfig
+  },
+  {
+    displayName: "Gemini 2.0 flash", // Updated display name to match model version (optional, adjust as needed)
+    model: "gemini-2.0-flash", // From your example payload
+    provider: "google",
+  }
+  // Add more models here as needed
+];
+
+// Select default based on isDefault flag or fallback
+export const defaultModelConfig: AIModelConfig = AImodels.find(m => m.isDefault) || AImodels[0];
+
+export const defaultSystemPrompt = "You are a helpful assistant.";
+export const API_STREAM_URL = "https://api-chat.kwikon.club/api/chat/stream";
+export const API_HISTORY_URL_BASE = "https://api-chat.kwikon.club/api/chat/"; // e.g., append {chatId}/history

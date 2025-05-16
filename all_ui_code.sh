@@ -1,0 +1,1 @@
+find app/components/chat app/routes app/hooks app/routes app/lib/ai-models.ts -type f -exec sh -c 'echo  "\n---- $1 ----"; cat "$1"' _ {} \; > all_ui_code.txt  

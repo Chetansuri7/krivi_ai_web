@@ -1,13 +1,14 @@
+// app/routes/__app.tsx    
 import type { LoaderFunctionArgs } from "@remix-run/node";  
 import { json } from "@remix-run/node";  
 import { Outlet, useLoaderData } from "@remix-run/react";  
+  
 import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";  
 import { AppSidebar } from "~/components/app-sidebar";  
-import { SidebarProvider, SidebarInset } from "~/components/ui/sidebar";  
-import { Command } from "lucide-react";  
+import { SidebarProvider, SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";  
 import type { NavItem } from "~/components/sidebar-nav";  
+import { Separator } from "~/components/ui/separator";  
   
-// Define the loader return type (optional, for clarity)  
 export interface AppLoaderData {  
   user: AuthenticatedUserDetails;  
   appName: string;  
@@ -16,7 +17,6 @@ export interface AppLoaderData {
   
 export async function loader({ request }: LoaderFunctionArgs) {  
   await requireAuth(request);  
-  
   // Provide only dummy data, until real user API is available  
   return json<AppLoaderData>({  
     user: {  
@@ -26,18 +26,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
       avatar_url: "/avatars/default.png",  
     },  
     appName: "Krivi AI",  
-    mainNavItems: [], // always provide array, not null or [null]  
+    mainNavItems: [],  
   });  
 }  
   
+  
 export default function AppLayout() {  
   const { user, appName, mainNavItems } = useLoaderData<typeof loader>();  
-  
-  // Map AuthenticatedUserDetails to SidebarAccount's expected props  
   const sidebarUser = {  
     name: user.name,  
     email: user.email,  
-    avatar: user.avatar_url || "/avatars/default.png",  
+    avatar: "/avatars/default.png",  
   };  
   
   return (  
@@ -47,9 +46,25 @@ export default function AppLayout() {
         appName={appName}  
         mainNav={mainNavItems}  
       />  
+      {/* This inset is the "main section" right of the sidebar */}  
       <SidebarInset>  
-        {/* Outlet renders matched child route */}  
-        <Outlet />  
+        {/* COLUMN FLEX for main app area */}  
+        <div className="relative flex flex-col h-[100dvh] min-h-0 w-full"> {/* The main column, taking whole viewport height */}  
+          {/* Fixed topbar: stays always at the top inside the app area */}  
+          <header className="sticky top-0 left-0 right-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background">  
+            <div className="flex items-center gap-2 px-4">  
+              <SidebarTrigger className="-ml-1" />  
+              <Separator orientation="vertical" className="mr-2 h-4 bg-border" />  
+            </div>  
+          </header>  
+  
+          {/* Main body below topbar, flexes to fill available height */}  
+          <main className="relative flex-1 min-h-0 w-full flex flex-col">  
+            {/* render whatever the route wants (in your case, ChatPageLayout)  
+                 Make sure ChatPageLayout uses the available height!! */}  
+            <Outlet />  
+          </main>  
+        </div>  
       </SidebarInset>  
     </SidebarProvider>  
   );  
