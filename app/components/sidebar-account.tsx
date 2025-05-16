@@ -2,32 +2,34 @@
 "use client";
 
 import * as React from "react";
-import { LogOut, Settings2, User2, ChevronsUpDown, Palette } from "lucide-react";
+import { LogOut, Settings2, User2, ChevronsUpDown } from "lucide-react"; // Removed Palette for now
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "~/components/ui/popover"; // Assuming Popover or DropdownMenu
+} from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar"; // Assuming Avatar component
+import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar";
 import { Separator } from "~/components/ui/separator";
 import { cn } from "~/lib/utils";
-// import { useTheme } from "next-themes"; // If you implement theme switching
+// import { useTheme } from "next-themes"; // For theme switching, if implemented
 
 interface User {
   name: string;
   email: string;
-  avatar: string;
+  avatar: string; // URL to avatar image
 }
 
 interface SidebarAccountProps {
   user: User;
+  onLogout?: () => void; // Optional: For handling logout action
 }
 
-export function SidebarAccount({ user }: SidebarAccountProps) {
-  // const { theme, setTheme } = useTheme(); // Example for theme toggle
+export function SidebarAccount({ user, onLogout }: SidebarAccountProps) {
+  // const { theme, setTheme } = useTheme();
 
   const getInitials = (name: string) => {
+    if (!name) return "";
     return name
       .split(" ")
       .map((n) => n[0])
@@ -35,12 +37,27 @@ export function SidebarAccount({ user }: SidebarAccountProps) {
       .toUpperCase();
   };
 
+  const handleLogout = async () => {
+    if (onLogout) {
+        onLogout();
+    } else {
+        // Default logout: redirect to backend logout endpoint which should clear cookies
+        // This URL needs to come from api.config.ts
+        // For now, a placeholder:
+        // window.location.href = getApiUrl("AUTH_LOGOUT");
+        // Or use Remix Form for a POST request if logout is an action
+        console.log("Logout action - implement using Remix form or direct navigation to logout endpoint");
+        window.location.href = "/auth/logout"; // Placeholder, use getApiUrl
+    }
+  };
+
+
   return (
-    <div className="w-full p-3"> {/* Consistent padding */}
+    <div className="w-full p-3">
       <Popover>
         <PopoverTrigger asChild>
           <Button
-            variant="ghost" // Use ghost for a less prominent but interactive trigger
+            variant="ghost"
             className={cn(
               "w-full flex items-center gap-3 px-3 py-2.5 h-auto text-left",
               "text-sm font-medium rounded-md transition-colors",
@@ -50,7 +67,7 @@ export function SidebarAccount({ user }: SidebarAccountProps) {
             )}
             aria-label="Open user menu"
           >
-            <Avatar className="size-8 rounded-md"> {/* Shadcn-like rounded-md avatar */}
+            <Avatar className="size-8 rounded-md">
               <AvatarImage src={user.avatar} alt={user.name} />
               <AvatarFallback className="rounded-md bg-sidebar-primary text-sidebar-primary-foreground text-xs">
                 {getInitials(user.name)}
@@ -64,12 +81,11 @@ export function SidebarAccount({ user }: SidebarAccountProps) {
           </Button>
         </PopoverTrigger>
         <PopoverContent
-          align="end" // Align to the end of the trigger
-          side="top"    // Position popover above the button
+          align="end"
+          side="top"
           sideOffset={8}
           className="w-[calc(var(--radix-popover-trigger-width)+20px)] min-w-56 p-1.5 rounded-lg shadow-xl bg-popover text-popover-foreground border border-border"
         >
-          {/* User Info in Popover Header */}
           <div className="flex items-center gap-3 p-2.5 border-b border-border mb-1">
             <Avatar className="size-9 rounded-md">
               <AvatarImage src={user.avatar} alt={user.name} />
@@ -90,19 +106,14 @@ export function SidebarAccount({ user }: SidebarAccountProps) {
             <Button variant="ghost" className="w-full justify-start gap-2.5 px-2.5 py-2 text-sm h-auto font-normal text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md">
               <Settings2 className="size-4 text-muted-foreground" /> Settings
             </Button>
-            {/* Example Theme Toggle */}
-            {/*
-            <Button
-                variant="ghost"
-                onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-                className="w-full justify-start gap-2.5 px-2.5 py-2 text-sm h-auto font-normal text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md"
-            >
-                <Palette className="size-4 text-muted-foreground" />
-                <span>Switch to {theme === "light" ? "Dark" : "Light"} Mode</span>
-            </Button>
-            */}
             <Separator className="my-1 bg-border" />
-            <Button variant="ghost" className="w-full justify-start gap-2.5 px-2.5 py-2 text-sm h-auto font-normal text-destructive hover:bg-destructive/10 hover:text-destructive rounded-md">
+            {/* For Logout, it's better to use a Remix <Form method="post" action="/logout"> or similar */}
+            {/* Or a link to a backend endpoint that clears HttpOnly cookies */}
+            <Button
+              variant="ghost"
+              onClick={handleLogout}
+              className="w-full justify-start gap-2.5 px-2.5 py-2 text-sm h-auto font-normal text-destructive hover:bg-destructive/10 hover:text-destructive rounded-md"
+            >
               <LogOut className="size-4" /> Logout
             </Button>
           </nav>

@@ -2,12 +2,14 @@
 
 // For client-side access in Remix + Vite, use VITE_ prefix for env vars
 // Make sure VITE_API_BASE_URL is defined in your .env file
-export const API_BASE_URL = process.env.VITE_API_BASE_URL;
 
-// This check is for build/server time. On the client, it might be undefined initially.
-// It's better to check for API_BASE_URL before each use in getApiUrl.
+// Correctly access environment variables for client and server
+export const API_BASE_URL = typeof window !== 'undefined' // Check if running in browser
+  ? import.meta.env.VITE_API_BASE_URL // Client-side (Vite)
+  : process.env.VITE_API_BASE_URL;   // Server-side (Node.js)
+
+// This check is for build/server time.
 if (!API_BASE_URL && typeof process !== 'undefined' && process.env.NODE_ENV !== 'production') {
-  // This warning will appear during server-side rendering or build if not set
   console.warn(
     "WARNING: VITE_API_BASE_URL environment variable is not set. Please define it in your .env file (e.g., VITE_API_BASE_URL=https://your-api.com)."
   );
@@ -34,10 +36,8 @@ export const API_ROUTES = {
  */
 export function getApiUrl(routeKey: keyof typeof API_ROUTES): string {
   if (!API_BASE_URL) {
-    const errorMessage = `VITE_API_BASE_URL is not configured or not available on the client. Cannot construct API URL for "${String(routeKey)}". Check your .env file and Vite/Remix configuration.`;
+    const errorMessage = `VITE_API_BASE_URL is not configured or not available. Cannot construct API URL for "${String(routeKey)}". Check your .env file and Vite/Remix configuration. Current URL: ${API_BASE_URL}`;
     console.error(errorMessage);
-    // Throwing an error here will stop the operation, which is usually desired
-    // if the base URL is essential for the API call.
     throw new Error(errorMessage);
   }
   const path = API_ROUTES[routeKey];

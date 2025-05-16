@@ -10,12 +10,14 @@ export function cn(...inputs: ClassValue[]) {
 
 // For client-side access in Remix + Vite, use VITE_ prefix for env vars
 // Make sure VITE_API_BASE_URL is defined in your .env file
-export const API_BASE_URL = process.env.VITE_API_BASE_URL;
 
-// This check is for build/server time. On the client, it might be undefined initially.
-// It's better to check for API_BASE_URL before each use in getApiUrl.
+// Correctly access environment variables for client and server
+export const API_BASE_URL = typeof window !== 'undefined' // Check if running in browser
+  ? import.meta.env.VITE_API_BASE_URL // Client-side (Vite)
+  : process.env.VITE_API_BASE_URL;   // Server-side (Node.js)
+
+// This check is for build/server time.
 if (!API_BASE_URL && typeof process !== 'undefined' && process.env.NODE_ENV !== 'production') {
-  // This warning will appear during server-side rendering or build if not set
   console.warn(
     "WARNING: VITE_API_BASE_URL environment variable is not set. Please define it in your .env file (e.g., VITE_API_BASE_URL=https://your-api.com)."
   );
@@ -42,10 +44,8 @@ export const API_ROUTES = {
  */
 export function getApiUrl(routeKey: keyof typeof API_ROUTES): string {
   if (!API_BASE_URL) {
-    const errorMessage = `VITE_API_BASE_URL is not configured or not available on the client. Cannot construct API URL for "${String(routeKey)}". Check your .env file and Vite/Remix configuration.`;
+    const errorMessage = `VITE_API_BASE_URL is not configured or not available. Cannot construct API URL for "${String(routeKey)}". Check your .env file and Vite/Remix configuration. Current URL: ${API_BASE_URL}`;
     console.error(errorMessage);
-    // Throwing an error here will stop the operation, which is usually desired
-    // if the base URL is essential for the API call.
     throw new Error(errorMessage);
   }
   const path = API_ROUTES[routeKey];
@@ -56,11 +56,22 @@ export function getApiUrl(routeKey: keyof typeof API_ROUTES): string {
 }--- app/lib/auth.server.ts ---
 // app/lib/auth.server.ts
 import { redirect } from "@remix-run/node";
-import { getApiUrl, API_ROUTES } from "./api.config"; // Changed import
+import { getApiUrl, API_ROUTES } from "./api.config";
 
 // --- Auth Status Types & Helpers ---
+
+// Define a structure for authenticated user details
+// Adjust this based on what your /auth/check API returns
+export type AuthenticatedUserDetails = {
+  id: string;
+  name: string;
+  email: string;
+  avatar_url?: string; // Or 'avatar' if that's the field name
+  // any other relevant user fields
+};
+
 export type AuthStatus =
-  | { status: "authenticated"; reason: "valid_access_token_and_session" | "valid_access_token" }
+  | { status: "authenticated"; reason: "valid_access_token_and_session" | "valid_access_token"; user?: AuthenticatedUserDetails }
   | { status: "login_required"; reason: "session_terminated" | "invalid_or_expired_tokens" | "no_tokens_present" }
   | { status: "refresh_required"; reason: "valid_refresh_token" }
   | { status: "error"; reason?: string };
@@ -73,16 +84,11 @@ export function isRefreshable(auth: AuthStatus): auth is Extract<AuthStatus, { s
   return auth.status === "refresh_required";
 }
 
-// isLoginRequired is not strictly needed if isAuthenticated and isRefreshable are used, but can be kept for clarity
-// export function isLoginRequired(auth: AuthStatus) {
-//   return auth.status === "login_required";
-// }
-
 // --- Core Auth Functions ---
 
 export async function checkAuth(request: Request): Promise<AuthStatus> {
   try {
-    const response = await fetch(getApiUrl("AUTH_CHECK"), { // Use getApiUrl
+    const response = await fetch(getApiUrl("AUTH_CHECK"), {
       method: "GET",
       headers: {
         cookie: request.headers.get("cookie") ?? "",
@@ -92,21 +98,26 @@ export async function checkAuth(request: Request): Promise<AuthStatus> {
 
     if (!response.ok && response.headers.get("content-type")?.includes("application/json")) {
       const data = await response.json();
-      if (data && data.status && data.reason) {
+      // Check if the error response matches AuthStatus structure for login_required or error
+      if (data && data.status && (data.status === "login_required" || data.status === "error" || data.status === "refresh_required") && data.reason) {
         return data as AuthStatus;
       }
       return { status: "login_required", reason: data.message || `API error: ${response.status}` };
     } else if (!response.ok) {
-      console.error("Auth check API request failed:", response.status, await response.text());
-      return { status: "error", reason: `API error: ${response.status}` };
+      const errorText = await response.text();
+      console.error("Auth check API request failed:", response.status, errorText);
+      return { status: "error", reason: `API error: ${response.status}. ${errorText}` };
     }
 
     const data = await response.json();
-    if (data && typeof data.status === 'string') {
+    // Ensure the success response also matches the AuthStatus structure
+    if (data && data.status === "authenticated" && data.reason) {
+      // 'user' field is optional in AuthStatus, so it's fine if backend doesn't always send it
+      // but for requireAuth, we'll expect it.
       return data as AuthStatus;
     }
     console.error("Auth check API response is not in expected AuthStatus format:", data);
-    return { status: "error", reason: "Invalid API response format from auth/check" };
+    return { status: "error", reason: "" };
   } catch (error) {
     console.error("Error during checkAuth:", error);
     return { status: "error", reason: "Network error or failed to parse auth/check response" };
@@ -115,7 +126,7 @@ export async function checkAuth(request: Request): Promise<AuthStatus> {
 
 export async function refreshTokens(request: Request): Promise<{ ok: boolean; setCookieHeader?: string | null }> {
   try {
-    const response = await fetch(getApiUrl("AUTH_REFRESH"), { // Use getApiUrl
+    const response = await fetch(getApiUrl("AUTH_REFRESH"), {
       method: "POST",
       headers: {
         cookie: request.headers.get("cookie") ?? "",
@@ -132,7 +143,8 @@ export async function refreshTokens(request: Request): Promise<{ ok: boolean; se
     }
 
     const data = await response.json();
-    if (data.status === "Success" || data.message?.includes("refreshed")) {
+    // Assuming backend returns a success status or specific message
+    if (data.status === "Success" || data.message?.includes("refreshed") || data.ok === true || response.status === 200) {
       return { ok: true, setCookieHeader };
     } else {
       console.warn("Refresh token API call was not successful according to response body:", data);
@@ -144,42 +156,59 @@ export async function refreshTokens(request: Request): Promise<{ ok: boolean; se
   }
 }
 
-export async function requireAuth(
-  request: Request,
-  redirectTo: string = "/login"
-): Promise<Extract<AuthStatus, { status: "authenticated" }>> {
-  let authStatus = await checkAuth(request);
-
-  if (isRefreshable(authStatus)) {
-    const { ok, setCookieHeader } = await refreshTokens(request);
-    if (ok && setCookieHeader) {
-      const currentUrl = new URL(request.url);
-      const destination = currentUrl.pathname + currentUrl.search;
-      console.log(`[requireAuth] Refresh successful, redirecting to ${destination} to apply new cookies.`);
-      throw redirect(destination, {
-        headers: { "Set-Cookie": setCookieHeader },
-      });
-    }
-    console.log("[requireAuth] Token refresh attempt failed or did not set cookies. Re-checking auth status.");
-    authStatus = await checkAuth(request);
-  }
-
-  if (!isAuthenticated(authStatus)) {
-    const currentPath = new URL(request.url).pathname;
-    const currentSearch = new URL(request.url).search;
-    // Only add 'next' if we are not already trying to go to the redirectTo page
-    // and if the current path is not the root (unless root itself needs a specific 'next')
-    const nextParam = (currentPath !== redirectTo && (currentPath !== "/" || currentSearch !== ""))
-      ? `?next=${encodeURIComponent(currentPath + currentSearch)}`
-      : "";
-    console.log(`[requireAuth] User not authenticated (status: ${authStatus.status}, reason: ${authStatus.reason}). Redirecting to ${redirectTo}${nextParam}.`);
-    throw redirect(`${redirectTo}${nextParam}`);
-  }
-  return authStatus; // Already narrowed by isAuthenticated
-}
-
-export { getApiUrl };
---- app/hooks/use-mobile.tsx ---
+export async function requireAuth(  
+  request: Request,  
+  redirectTo: string = "/login"  
+): Promise<Extract<AuthStatus, { status: "authenticated" }>> {  
+  let authStatus = await checkAuth(request);  
+  
+  if (isRefreshable(authStatus)) {  
+    const { ok, setCookieHeader } = await refreshTokens(request);  
+    if (ok && setCookieHeader) {  
+      const currentUrl = new URL(request.url);  
+      const destination = currentUrl.pathname + currentUrl.search;  
+      throw redirect(destination, {  
+        headers: { "Set-Cookie": setCookieHeader },  
+      });  
+    }  
+    authStatus = await checkAuth(request);  
+  }  
+  
+  if (!isAuthenticated(authStatus)) {  
+    const currentPath = new URL(request.url).pathname;  
+    const currentSearch = new URL(request.url).search;  
+    const nextParam =  
+      currentPath !== redirectTo && (currentPath !== "/" || currentSearch !== "")  
+        ? `?next=${encodeURIComponent(currentPath + currentSearch)}`  
+        : "";  
+    let reasonParam = "";  
+    if (  
+      authStatus.status === "login_required" &&  
+      authStatus.reason  
+    ) {  
+      reasonParam = `&error_description=${encodeURIComponent(  
+        authStatus.reason  
+      )}`;  
+    } else if (authStatus.status === "error" && authStatus.reason) {  
+      reasonParam = `&error_description=${encodeURIComponent(  
+        authStatus.reason  
+      )}`;  
+    } else if (authStatus.status === "error") {  
+      reasonParam = `&error_description=auth_check_failed`;  
+    }  
+    const finalRedirectTo = `${redirectTo}${nextParam}${nextParam && reasonParam  
+      ? reasonParam  
+      : !nextParam && reasonParam  
+      ? "?" + reasonParam.substring(1)  
+      : ""  
+      }`;  
+  
+    throw redirect(finalRedirectTo);  
+  }  
+  
+  // Do NOT check for user presence — just return the auth status  
+  return authStatus as Extract<AuthStatus, { status: "authenticated" }>;  
+}  --- app/hooks/use-mobile.tsx ---
 import * as React from "react"
 
 const MOBILE_BREAKPOINT = 768
@@ -188,18 +217,26 @@ export function useIsMobile() {
   const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined)
 
   React.useEffect(() => {
+    // Ensure window is defined (for SSR safety, though matchMedia is client-only)
+    if (typeof window === 'undefined') {
+      setIsMobile(false); // Default for server or non-browser env
+      return;
+    }
+
     const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`)
     const onChange = () => {
       setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
     }
+    // Add listener
     mql.addEventListener("change", onChange)
+    // Set initial state
     setIsMobile(window.innerWidth < MOBILE_BREAKPOINT)
+    // Clean up listener
     return () => mql.removeEventListener("change", onChange)
   }, [])
 
   return !!isMobile
-}
---- app/root.tsx ---
+}--- app/root.tsx ---
 import {
   Links,
   Meta,
@@ -207,7 +244,7 @@ import {
   Scripts,
   ScrollRestoration,
 } from "@remix-run/react";
-import type { LinksFunction } from "@remix-run/node";
+import type { LinksFunction } from "@remix-run/node"; // No loader needed here if __app.tsx handles auth
 
 import "./tailwind.css";
 
@@ -244,63 +281,65 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  // This Outlet will render __app.tsx (for protected routes) or login.tsx, etc.
   return <Outlet />;
-}
---- app/routes/page.tsx ---
-// app/routes/some-route/page.tsx (or your page file)
-import { AppSidebar } from "~/components/app-sidebar"; // Adjusted path
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "~/components/ui/breadcrumb";
-import { Separator } from "~/components/ui/separator";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "~/components/ui/sidebar"; // Assuming these are your UI primitives
-
-export default function Page() {
-  return (
-    <SidebarProvider>
-      <AppSidebar />
-      <SidebarInset>
-        <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background">
-          {/* ^-- Use theme variables for border and background */}
-          <div className="flex items-center gap-2 px-4">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mr-2 h-4 bg-border" /> {/* Theme variable for separator */}
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink href="#" className="text-foreground hover:text-primary">
-                    Building Your Application
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block text-muted-foreground" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage className="text-foreground">Data Fetching</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </div>
-        </header>
-        <div className="flex flex-1 flex-col gap-4 p-4 pt-2"> {/* Adjusted pt-0 to pt-2 for some spacing */}
-          <div className="grid auto-rows-min gap-4 md:grid-cols-3">
-            <div className="aspect-video rounded-xl bg-muted/50" />
-            <div className="aspect-video rounded-xl bg-muted/50" />
-            <div className="aspect-video rounded-xl bg-muted/50" />
-          </div>
-          <div className="min-h-[100vh] flex-1 rounded-xl bg-muted/50 md:min-h-min" />
-        </div>
-      </SidebarInset>
-    </SidebarProvider>
-  );
-}--- app/routes/sample.tsx ---
+}--- app/routes/__app.tsx ---
+import type { LoaderFunctionArgs } from "@remix-run/node";  
+import { json } from "@remix-run/node";  
+import { Outlet, useLoaderData } from "@remix-run/react";  
+import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";  
+import { AppSidebar } from "~/components/app-sidebar";  
+import { SidebarProvider, SidebarInset } from "~/components/ui/sidebar";  
+import { Command } from "lucide-react";  
+import type { NavItem } from "~/components/sidebar-nav";  
+  
+// Define the loader return type (optional, for clarity)  
+export interface AppLoaderData {  
+  user: AuthenticatedUserDetails;  
+  appName: string;  
+  mainNavItems: NavItem[];  
+}  
+  
+export async function loader({ request }: LoaderFunctionArgs) {  
+  await requireAuth(request);  
+  
+  // Provide only dummy data, until real user API is available  
+  return json<AppLoaderData>({  
+    user: {  
+      id: "dummy",  
+      name: "Dummy",  
+      email: "dummy@example.com",  
+      avatar_url: "/avatars/default.png",  
+    },  
+    appName: "Krivi AI",  
+    mainNavItems: [], // always provide array, not null or [null]  
+  });  
+}  
+  
+export default function AppLayout() {  
+  const { user, appName, mainNavItems } = useLoaderData<typeof loader>();  
+  
+  // Map AuthenticatedUserDetails to SidebarAccount's expected props  
+  const sidebarUser = {  
+    name: user.name,  
+    email: user.email,  
+    avatar: user.avatar_url || "/avatars/default.png",  
+  };  
+  
+  return (  
+    <SidebarProvider>  
+      <AppSidebar  
+        user={sidebarUser}  
+        appName={appName}  
+        mainNav={mainNavItems}  
+      />  
+      <SidebarInset>  
+        {/* Outlet renders matched child route */}  
+        <Outlet />  
+      </SidebarInset>  
+    </SidebarProvider>  
+  );  
+}  --- app/routes/sample.tsx ---
 import type { MetaFunction } from "@remix-run/node";
 import { useState } from "react"; // Need useState for Dialog
 
@@ -669,9 +708,9 @@ import {
   refreshTokens,
   isAuthenticated,
   isRefreshable,
-  getApiUrl, // AuthStatus also exported from auth.server
-  type AuthStatus,
+  type AuthStatus, // Type import is fine from .server files
 } from "~/lib/auth.server";
+import { getApiUrl } from "~/lib/api.config"; // Import getApiUrl from client-safe config
 import { useIsMobile } from "~/hooks/use-mobile";
 
 export const meta: MetaFunction = () => {
@@ -684,136 +723,193 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   let authStatus = await checkAuth(request);
 
-  // 1. Handle refresh if needed
   if (isRefreshable(authStatus)) {
     console.log("[Login Loader] Token refresh required. Attempting refresh...");
     const { ok, setCookieHeader } = await refreshTokens(request);
     if (ok && setCookieHeader) {
       responseHeaders.append("Set-Cookie", setCookieHeader);
-      // Important: After refresh, re-check auth. The most reliable way is to redirect
-      // to allow the browser to send the new cookies.
-      // Redirect to the login page itself (or the intended 'next' page if already known to be safe).
-      const destination = url.pathname + url.search; // Preserve current query params
+      const destination = url.pathname + url.search;
       console.log(`[Login Loader] Refresh successful. Redirecting to ${destination} to apply new cookies.`);
       throw redirect(destination, { headers: responseHeaders });
     }
-    // If refresh failed, get the new auth status
-    authStatus = await checkAuth(request);
+    authStatus = await checkAuth(request); // Re-check auth after failed refresh
     console.log("[Login Loader] Refresh failed or no cookies set. New auth status:", authStatus.status);
   }
 
-  // 2. If authenticated, redirect away from login page
   if (isAuthenticated(authStatus)) {
-    const next = url.searchParams.get("next") || "/"; // Default to homepage
+    const next = url.searchParams.get("next") || "/"; // Default to app's root
     console.log(`[Login Loader] User already authenticated. Redirecting to: ${next}`);
-    // Pass along any Set-Cookie headers if a refresh attempt happened but didn't immediately lead to this block.
     throw redirect(next, { headers: responseHeaders });
   }
 
-  // 3. If not authenticated and not refreshable, user needs to log in.
-  //    Pass authStatus to the component for potential error messages.
   return json({ authStatus }, { headers: responseHeaders });
 }
 
-export default function LoginPage() {
-  const { authStatus } = useLoaderData<typeof loader>();
-  const [searchParams] = useSearchParams();
-  const isMobile = useIsMobile(); // Correctly using the hook
+export default function LoginPage() {  
+  const { authStatus } = useLoaderData<typeof loader>();  
+  const [searchParams] = useSearchParams();  
+  const isMobile = useIsMobile();  
+  
+  const googleLoginUrl = getApiUrl("GOOGLE_LOGIN");  
+  const nextParam = searchParams.get("next");  
+  const finalGoogleLoginUrl = nextParam  
+    ? `${googleLoginUrl}?final_redirect_path=${encodeURIComponent(nextParam)}`  
+    : googleLoginUrl;  
+  
+  // User-friendly error translation  
+  const ERROR_MESSAGES: Record<string, string | undefined> = {  
+    session_terminated: "Your session has been terminated. Please sign in again.",  
+    invalid_or_expired_tokens: "Your session is invalid or has expired. Please sign in again.",  
+    auth_check_failed: "Something went wrong. Please try signing in again.",  
+    // add other codes as needed  
+  };  
+  
+  let displayMessage = searchParams.get("message");  
+  let errorReason = searchParams.get("error_description") || searchParams.get("error");  
+  
+  if (!displayMessage && !errorReason && authStatus) {  
+    if (authStatus.status === "login_required") {  
+      errorReason = ERROR_MESSAGES[authStatus.reason] ?? "";  
+    } else if (authStatus.status === "error") {  
+      errorReason = ERROR_MESSAGES[authStatus.reason ?? ""] ?? "Something went wrong. Please try signing in again.";  
+    }  
+  }  
+  
+  // Never show technical/unknown or empty codes to user  
+  if (  
+    !errorReason ||  
+    ["no_tokens_present", "auth_check_failed", "error", "login_required"].includes(errorReason)  
+  ) {  
+    errorReason = "";  
+  }  
+  
+  return (  
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">  
+      <Card className="w-full max-w-md shadow-xl">  
+        <CardHeader className="text-center">  
+          <CardTitle className="text-3xl font-bold tracking-tight text-primary">  
+            Access Your Account  
+          </CardTitle>  
+          <CardDescription className="text-muted-foreground pt-2">  
+            Continue with Google to securely sign in.  
+          </CardDescription>  
+        </CardHeader>  
+        <CardContent className="space-y-6 pt-6">  
+          {errorReason && (  
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">  
+              <p>{errorReason}</p>  
+            </div>  
+          )}  
+          {displayMessage && !errorReason && (  
+            <div className="rounded-md border border-primary/50 bg-primary/10 p-3 text-center text-sm text-primary">  
+              <p>{displayMessage}</p>  
+            </div>  
+          )}  
+          <Button  
+            asChild  
+            size={isMobile ? "lg" : "lg"}  
+            className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-lg py-6"  
+          >  
+            <a href={finalGoogleLoginUrl} className="flex items-center justify-center gap-3">  
+              <FaGoogle className="h-5 w-5" />  
+              Sign in with Google  
+            </a>  
+          </Button>  
+        </CardContent>  
+        <CardFooter className="flex-col items-center text-center pt-6">  
+          <p className="text-xs text-muted-foreground">  
+            By proceeding, you agree to our Terms of Service and Privacy Policy.  
+          </p>  
+        </CardFooter>  
+      </Card>  
+    </div>  
+  );  
+}  --- app/routes/__app.page.tsx ---
+// app/routes/__app.page.tsx
+// SidebarProvider, AppSidebar, SidebarInset are now in __app.tsx layout
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "~/components/ui/breadcrumb";
+import { Separator } from "~/components/ui/separator";
+import { SidebarTrigger } from "~/components/ui/sidebar"; // Still needed for the header toggle
+// Potentially import MetaFunction if this page needs specific meta tags
+// import type { MetaFunction } from "@remix-run/node";
+// import { useRouteLoaderData } from "@remix-run/react";
+// import type { AppLoaderData } from "../__app";
 
-  // Your backend at GOOGLE_LOGIN should handle any 'next' or 'redirect_uri' logic
-  // to bring the user back to the correct frontend page after Google OAuth.
-  // This URL is just to initiate the flow with your backend.
-  const googleLoginUrl = getApiUrl("GOOGLE_LOGIN");
-  const nextParam = searchParams.get("next");
+// export const meta: MetaFunction = () => { return [{ title: "My Page" }]};
 
-  // If your backend needs the frontend's 'next' target, append it.
-  // Example: `${googleLoginUrl}?frontend_redirect_after_login=${encodeURIComponent(nextParam)}`
-  // Adjust query parameter name as per your backend's expectation.
-  const finalGoogleLoginUrl = nextParam
-    ? `${googleLoginUrl}?final_redirect_path=${encodeURIComponent(nextParam)}`
-    : googleLoginUrl;
-
-
-  let displayMessage = searchParams.get("message"); // General message from redirects
-  let errorReason = searchParams.get("error_description") || searchParams.get("error");
-
-
-  if (!displayMessage && !errorReason && authStatus) {
-    if (authStatus.status === "login_required") {
-      switch (authStatus.reason) {
-        case "session_terminated":
-          errorReason = "Your session has been terminated. Please sign in again.";
-          break;
-        case "invalid_or_expired_tokens":
-          errorReason = "Your session is invalid or has expired. Please sign in again.";
-          break;
-        // "no_tokens_present" is normal for login page, so no specific message unless you want one.
-      }
-    } else if (authStatus.status === "error" && authStatus.reason) {
-      errorReason = authStatus.reason;
-    }
-  }
+export default function AppPage() { // Changed name for clarity, can be 'Page'
+  // const appData = useRouteLoaderData<AppLoaderData>("routes/__app");
+  // Access user data via appData.user if needed here
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">
-      <Card className="w-full max-w-md shadow-xl">
-        <CardHeader className="text-center">
-          <CardTitle className="text-3xl font-bold tracking-tight text-primary">
-            Access Your Account
-          </CardTitle>
-          <CardDescription className="text-muted-foreground pt-2">
-            Continue with Google to securely sign in.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6 pt-6">
-          {errorReason && (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">
-              <p>{errorReason}</p>
-            </div>
-          )}
-          {displayMessage && !errorReason && (
-             <div className="rounded-md border border-primary/50 bg-primary/10 p-3 text-center text-sm text-primary">
-              <p>{displayMessage}</p>
-            </div>
-          )}
-          <Button
-            asChild
-            size={isMobile ? "lg" : "lg"} // Using lg for better touch target
-            className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-lg py-6"
-          >
-            <a href={finalGoogleLoginUrl} className="flex items-center justify-center gap-3">
-              <FaGoogle className="h-5 w-5" />
-              Sign in with Google
-            </a>
-          </Button>
-        </CardContent>
-        <CardFooter className="flex-col items-center text-center pt-6">
-          <p className="text-xs text-muted-foreground">
-            By proceeding, you agree to our Terms of Service and Privacy Policy.
-          </p>
-        </CardFooter>
-      </Card>
-    </div>
+    <>
+      {/* This header is part of the content for this specific page */}
+      <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background">
+        <div className="flex items-center gap-2 px-4">
+          <SidebarTrigger className="-ml-1" />
+          <Separator orientation="vertical" className="mr-2 h-4 bg-border" />
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem className="hidden md:block">
+                <BreadcrumbLink href="#" className="text-foreground hover:text-primary">
+                  Building Your Application
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator className="hidden md:block text-muted-foreground" />
+              <BreadcrumbItem>
+                <BreadcrumbPage className="text-foreground">Data Fetching</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        </div>
+      </header>
+      {/* Page-specific content */}
+      <div className="flex flex-1 flex-col gap-4 p-4 pt-2">
+        <div className="grid auto-rows-min gap-4 md:grid-cols-3">
+          <div className="aspect-video rounded-xl bg-muted/50" />
+          <div className="aspect-video rounded-xl bg-muted/50" />
+          <div className="aspect-video rounded-xl bg-muted/50" />
+        </div>
+        <div className="min-h-[100vh] flex-1 rounded-xl bg-muted/50 md:min-h-min" />
+      </div>
+    </>
   );
-}--- app/routes/_index.tsx ---
+}--- app/routes/__app._index.tsx ---
 import type { MetaFunction } from "@remix-run/node";
+// No loader needed here usually, as __app.tsx handles auth and provides user data if necessary
+// If this page specifically needs more data, add a loader.
+// import { useRouteLoaderData } from "@remix-run/react";
+// import type { AppLoaderData } from "../__app"; // To access user data
 
 export const meta: MetaFunction = () => {
   return [
-    { title: "New Remix App" },
-    { name: "description", content: "Welcome to Remix!" },
+    { title: "Krivi AI Home" }, // Updated title
+    { name: "description", content: "Welcome to Krivi AI!" },
   ];
 };
 
-export default function Index() {
+export default function AppIndexPage() {
+  // const appData = useRouteLoaderData<AppLoaderData>("routes/__app");
+  // const userName = appData?.user?.name;
+
   return (
-    <div className="flex h-screen items-center justify-center">
-      <div className="flex flex-col items-center gap-16">
+    <div className="flex h-full flex-col items-center justify-center p-4"> {/* Changed to h-full for layout context */}
+      <div className="flex flex-col items-center gap-16 text-center">
         <header className="flex flex-col items-center gap-9">
-          <h1 className="leading text-2xl font-bold text-gray-800 dark:text-gray-100">
-            Welcome to <span className="sr-only">Remix</span>
+          <h1 className="text-2xl font-bold text-foreground">
+            Welcome to Krivi AI!
+            {/* {userName && <>, {userName}!</>} */}
           </h1>
-          <div className="h-[144px] w-[434px]">
+          <p className="text-muted-foreground">This is your main application dashboard area.</p>
+          {/* You can replace the Remix logo with your app's content or components */}
+          <div className="h-[144px] w-[434px] hidden"> {/* Hiding default Remix logo for now */}
             <img
               src="/logo-light.png"
               alt="Remix"
@@ -826,26 +922,10 @@ export default function Index() {
             />
           </div>
         </header>
-        <nav className="flex flex-col items-center justify-center gap-4 rounded-3xl border border-gray-200 p-6 dark:border-gray-700">
-          <p className="leading-6 text-gray-700 dark:text-gray-200">
-            What&apos;s next?
-          </p>
-          <ul>
-            {resources.map(({ href, text, icon }) => (
-              <li key={href}>
-                <a
-                  className="group flex items-center gap-3 self-stretch p-3 leading-normal text-blue-700 hover:underline dark:text-blue-500"
-                  href={href}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {icon}
-                  {text}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
+        <div className="mt-8">
+          <p className="text-lg text-foreground">Start by exploring the sidebar or creating a new chat.</p>
+          {/* Add quick links or calls to action here */}
+        </div>
       </div>
     </div>
   );
@@ -955,26 +1035,26 @@ startTransition(() => {
 });
 --- app/components/sidebar-nav.tsx ---
 // /app/components/sidebar-nav.tsx
-
 import * as React from "react";
+import { Link, useNavigate } from "@remix-run/react"; // Import Link and useNavigate
 import { ChevronRight, type LucideIcon as LucideIconType } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { Button } from "~/components/ui/button";
 import { Separator } from "~/components/ui/separator";
 import { cn } from "~/lib/utils";
-// import { getApiUrl } from "~/lib/api.config"; // Temporarily commented out for direct URL usage below
+import { getApiUrl } from "~/lib/api.config"; // Use this for API calls
 
 type LucideIcon = LucideIconType;
 
 // --- Types ---
-interface NavSubItem {
+export interface NavSubItem { // Exported if needed elsewhere
   id: string;
   title: string;
   href: string;
   isActive?: boolean;
 }
 
-interface NavItem {
+export interface NavItem { // Exported for __app.tsx
   id: string;
   title: string;
   href?: string;
@@ -982,8 +1062,7 @@ interface NavItem {
   isActive?: boolean;
   subItems?: NavSubItem[];
   isGroupLabel?: boolean;
-  chatId?: string;
-  onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+  // onClick can be removed if navigation is handled by Link/Navigate
 }
 
 interface SidebarNavProps {
@@ -998,7 +1077,6 @@ interface ApiChatSession {
 }
 
 // --- Utility ---
-
 const getStartOfDay = (date: Date): Date => {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
@@ -1019,14 +1097,10 @@ const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[]
   thirtyDaysAgoStart.setDate(todayStart.getDate() - 30);
 
   const sections: { [key: string]: ApiChatSession[] } = {
-    today: [],
-    yesterday: [],
-    prev7Days: [],
-    prev30Days: [],
+    today: [], yesterday: [], prev7Days: [], prev30Days: [],
   };
 
-  // Ensure sessions are sorted by lastMessageAt descending if not already from API
-  // For example: chatSessions.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
+  chatSessions.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
 
   chatSessions.forEach(session => {
     const sessionDate = new Date(session.lastMessageAt);
@@ -1034,21 +1108,14 @@ const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[]
     else if (sessionDate >= yesterdayStart) sections.yesterday.push(session);
     else if (sessionDate >= sevenDaysAgoStart) sections.prev7Days.push(session);
     else if (sessionDate >= thirtyDaysAgoStart) sections.prev30Days.push(session);
+    // older items are ignored for now, could add an "Older" section
   });
 
   const createChatNavItem = (session: ApiChatSession): NavItem => ({
     id: `chat-${session.chatId}`,
     title: session.title.length > 30 ? session.title.substring(0, 27) + "..." : session.title,
-    href: `/chat/${session.chatId}`, // This href can be used by Remix's <Link> component
-    chatId: session.chatId,
-    onClick: (e) => {
-      e.preventDefault();
-      // For Remix, prefer client-side navigation using <Link to={...}> or useNavigate()
-      // to avoid full page reloads.
-      // Example: navigate(`/chat/${session.chatId}`);
-      // For now, using window.location.href as per existing structure:
-      window.location.href = `/chat/${session.chatId}`;
-    },
+    href: `/chat/${session.chatId}`, // Use this for Remix <Link>
+    // No onClick needed here as <Link> will handle navigation
   });
 
   if (sections.today.length > 0) {
@@ -1072,9 +1139,9 @@ const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[]
 };
 
 // --- NavItemDisplay ---
-
 const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item, isSubItem = false }) => {
   const [isOpen, setIsOpen] = React.useState(item.isActive ?? false);
+  const navigate = useNavigate(); // For programmatic navigation if needed
 
   if (item.isGroupLabel) {
     return <div className="px-3 pt-4 pb-1.5 text-[0.8125rem] font-semibold text-sidebar-foreground">
@@ -1082,28 +1149,28 @@ const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item
     </div>;
   }
 
+  const commonButtonClasses = cn(
+    "w-full justify-start items-center gap-2.5 h-auto px-3 py-1.5 text-[0.8125rem] font-medium",
+    isSubItem && "pl-9 pr-3 py-1.5 text-xs",
+    item.isActive
+      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+    "transition-colors rounded-md"
+  );
+
   // For simple links (including chat history items)
-  // If item.href is a Remix route, consider using <Link to={item.href} prefetch="intent">
-  // instead of <a href={...}> for client-side navigation.
   if (!item.subItems || item.subItems.length === 0) {
     return (
       <Button
         variant="ghost"
-        asChild
-        className={cn(
-          "w-full justify-start items-center gap-2.5 h-auto px-3 py-1.5 text-[0.8125rem] font-medium",
-          isSubItem && "pl-9 pr-3 py-1.5 text-xs", // Indent sub-items
-          item.isActive
-            ? "bg-sidebar-accent text-sidebar-accent-foreground" // Active state
-            : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground", // Default and hover
-          "transition-colors rounded-md"
-        )}
-        title={item.title} // Show full title on hover
+        asChild // Important for Link to take over styling and behavior
+        className={commonButtonClasses}
+        title={item.title}
       >
-        <a href={item.href || "#"} onClick={item.onClick}>
+        <Link to={item.href || "#"} prefetch="intent"> {/* Use Link component */}
           {item.icon && <item.icon className={cn("size-4 shrink-0", isSubItem && "size-3.5")} />}
           <span className="truncate flex-1">{item.title}</span>
-        </a>
+        </Link>
       </Button>
     );
   }
@@ -1112,32 +1179,34 @@ const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className="w-full">
       <div className="flex items-center">
+        {/* Main part of the collapsible trigger - can be a Link if item.href is primary action */}
         <Button
-          variant="ghost"
-          asChild
-          className={cn(
-            "w-full justify-start items-center gap-2.5 h-auto px-3 py-1.5 text-[0.8125rem] font-medium flex-1",
-            item.isActive && !isOpen // Active but closed
-              ? "bg-sidebar-accent/70 text-sidebar-accent-foreground"
-              : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-            "transition-colors rounded-md"
-          )}
-          title={item.title}
+            variant="ghost"
+            asChild={!!item.href} // Use asChild if item.href exists to make it a Link
+            className={cn(commonButtonClasses, "flex-1")}
+            title={item.title}
+            onClick={!item.href ? (e) => { e.preventDefault(); setIsOpen(!isOpen); } : undefined} // Toggle if not a link
         >
-          <a
-            href={item.href || "#"}
-            onClick={(e) => {
-              if (item.subItems && item.subItems.length > 0) {
-                e.preventDefault(); // Prevent navigation if it's a collapsible trigger
-                setIsOpen(!isOpen);
-              } else if (item.onClick) {
-                item.onClick(e); // Call custom onClick if provided (e.g., for chat items)
-              }
-            }}
-          >
-            {item.icon && <item.icon className="size-4 shrink-0" />}
-            <span className="truncate flex-1">{item.title}</span>
-          </a>
+            {item.href ? (
+                <Link to={item.href} prefetch="intent" onClick={(e) => {
+                    // If it has sub-items, prevent navigation and toggle.
+                    // If it also has an href, this behavior might be complex.
+                    // Typically, a collapsible trigger itself doesn't navigate.
+                    if (item.subItems && item.subItems.length > 0) {
+                        e.preventDefault();
+                        setIsOpen(!isOpen);
+                    }
+                }}>
+                    {item.icon && <item.icon className="size-4 shrink-0" />}
+                    <span className="truncate flex-1">{item.title}</span>
+                </Link>
+            ) : (
+                // If no href, the button itself handles the click for collapsing
+                <>
+                    {item.icon && <item.icon className="size-4 shrink-0" />}
+                    <span className="truncate flex-1">{item.title}</span>
+                </>
+            )}
         </Button>
         <CollapsibleTrigger asChild>
           <Button variant="ghost" size="icon" className="ml-1 size-7 shrink-0">
@@ -1146,11 +1215,11 @@ const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item
           </Button>
         </CollapsibleTrigger>
       </div>
-      <CollapsibleContent className="pl-3.5 mt-0.5 space-y-0.5"> {/* Indent sub-items */}
+      <CollapsibleContent className="pl-3.5 mt-0.5 space-y-0.5">
         {item.subItems.map((subItem) => (
           <NavItemDisplay
             key={subItem.id}
-            item={{ ...subItem, icon: (subItem as any).icon || (() => null) }} // Pass empty icon for subitems if not defined
+            item={{ ...subItem, icon: (subItem as any).icon || (() => null) }}
             isSubItem
           />
         ))}
@@ -1160,7 +1229,6 @@ const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item
 };
 
 // --- SidebarNav (Main) ---
-
 export function SidebarNav({ mainNav }: SidebarNavProps) {
   const [chatHistoryNavItems, setChatHistoryNavItems] = React.useState<NavItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = React.useState(true);
@@ -1169,48 +1237,32 @@ export function SidebarNav({ mainNav }: SidebarNavProps) {
   const refreshChatHistory = React.useCallback(async () => {
     setIsLoadingHistory(true);
     setErrorHistory(null);
-    console.log("[SidebarNav] Refreshing chat history…");
-
     try {
-      // Using direct URL as requested for now:
-      const apiUrl = "https://api-chat.kwikon.club/api/chat/session_list";
-      // When ready, switch back to:
-      // const apiUrl = getApiUrl("CHAT_SESSION_LIST");
-      console.log("[SidebarNav] Fetch URL:", apiUrl);
-
+      const apiUrl = getApiUrl("CHAT_SESSION_LIST"); // Use getApiUrl
       const response = await fetch(apiUrl, {
-        credentials: "include", // Essential for HttpOnly cookies
-        headers: {
-          "Accept": "application/json" // Good practice to specify expected response type
-        }
+        credentials: "include",
+        headers: { "Accept": "application/json" }
       });
-      console.log("[SidebarNav] Status:", response.status, response.statusText);
 
       if (!response.ok) {
-        let errorData: string = `Raw response: ${response.status} ${response.statusText}`;
+        let errorData = `API Error: ${response.status} ${response.statusText}`;
         try {
           if (response.headers.get("content-type")?.includes("application/json")) {
             const jsonData = await response.json();
-            errorData = JSON.stringify(jsonData);
+            errorData = jsonData.message || JSON.stringify(jsonData);
           } else {
             errorData = await response.text();
           }
-        } catch (parseErr) {
-          // console.warn("[SidebarNav] Could not parse error response body:", parseErr);
-          // errorData remains the raw status text if parsing fails
-        }
-        throw new Error(`API request failed: ${response.status} ${response.statusText}. Details: ${errorData}`);
+        } catch (parseErr) { /* ignore, use statusText */ }
+        throw new Error(errorData);
       }
-
       const data: ApiChatSession[] = await response.json();
-      // console.log("[SidebarNav] Data received:", data);
-
       const processedNavItems = processChatHistoryToNavItems(data);
       setChatHistoryNavItems(processedNavItems);
     } catch (err) {
-      // console.error("[SidebarNav] Failed to fetch/process chat history:", err);
-      setErrorHistory(err instanceof Error ? err.message : "An unknown error occurred fetching history.");
-      setChatHistoryNavItems([]); // Clear items on error
+      console.error("[SidebarNav] Failed to fetch/process chat history:", err);
+      setErrorHistory(err instanceof Error ? err.message : "An unknown error occurred.");
+      setChatHistoryNavItems([]);
     } finally {
       setIsLoadingHistory(false);
     }
@@ -1221,47 +1273,33 @@ export function SidebarNav({ mainNav }: SidebarNavProps) {
   }, [refreshChatHistory]);
 
   return (
-    <div className="flex flex-col h-full p-2 space-y-1"> {/* Main container for sidebar nav content */}
-      {/* Main Navigation Section */}
+    <div className="flex flex-col h-full p-2 space-y-1">
       {mainNav.length > 0 && (
-        <nav className="space-y-0.5"> {/* Adjust gap with space-y-* */}
+        <nav className="space-y-0.5">
           {mainNav.map((item) => <NavItemDisplay key={item.id} item={item} />)}
         </nav>
       )}
 
-      {/* Separator between main nav and chat history */}
-      {mainNav.length > 0 && (isLoadingHistory || chatHistoryNavItems.length > 0 || errorHistory) && (
+      {(mainNav.length > 0 && (isLoadingHistory || chatHistoryNavItems.length > 0 || errorHistory)) && (
         <Separator className="my-2 bg-border/60" />
       )}
 
-      {/* Chat History Title */}
       <div className="px-1 pt-1 pb-1 text-base font-semibold text-sidebar-foreground">
         Chat History
       </div>
 
-      {/* Chat History Section (Scrollable) */}
       <div className="flex-1 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
         {isLoadingHistory ? (
-          <div className="px-3 py-2 text-sm text-sidebar-foreground/70 text-center">
-            Loading history…
-          </div>
+          <div className="px-3 py-2 text-sm text-sidebar-foreground/70 text-center">Loading history…</div>
         ) : errorHistory ? (
           <div className="px-3 py-2 text-sm text-destructive text-center break-words">
-            Error fetching history.<br />
-            <span className="text-xs text-muted-foreground">
-              {/* Show a snippet of the error */}
-              {errorHistory.substring(0, 200)}
-              {errorHistory.length > 200 ? "..." : ""}
-            </span>
+            Error: {errorHistory.substring(0,150)}{errorHistory.length > 150 && "..."}
+            <Button variant="link" size="sm" onClick={refreshChatHistory} className="mt-1">Try again</Button>
           </div>
         ) : chatHistoryNavItems.length > 0 ? (
-          chatHistoryNavItems.map((item) => (
-            <NavItemDisplay key={item.id} item={item} />
-          ))
+          chatHistoryNavItems.map((item) => <NavItemDisplay key={item.id} item={item} />)
         ) : (
-          <div className="px-3 py-2 text-xs text-sidebar-foreground/60 italic">
-            No chat history found.
-          </div>
+          <div className="px-3 py-2 text-xs text-sidebar-foreground/60 italic">No chat history found.</div>
         )}
       </div>
     </div>
@@ -1271,32 +1309,34 @@ export function SidebarNav({ mainNav }: SidebarNavProps) {
 "use client";
 
 import * as React from "react";
-import { LogOut, Settings2, User2, ChevronsUpDown, Palette } from "lucide-react";
+import { LogOut, Settings2, User2, ChevronsUpDown } from "lucide-react"; // Removed Palette for now
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "~/components/ui/popover"; // Assuming Popover or DropdownMenu
+} from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
-import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar"; // Assuming Avatar component
+import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar";
 import { Separator } from "~/components/ui/separator";
 import { cn } from "~/lib/utils";
-// import { useTheme } from "next-themes"; // If you implement theme switching
+// import { useTheme } from "next-themes"; // For theme switching, if implemented
 
 interface User {
   name: string;
   email: string;
-  avatar: string;
+  avatar: string; // URL to avatar image
 }
 
 interface SidebarAccountProps {
   user: User;
+  onLogout?: () => void; // Optional: For handling logout action
 }
 
-export function SidebarAccount({ user }: SidebarAccountProps) {
-  // const { theme, setTheme } = useTheme(); // Example for theme toggle
+export function SidebarAccount({ user, onLogout }: SidebarAccountProps) {
+  // const { theme, setTheme } = useTheme();
 
   const getInitials = (name: string) => {
+    if (!name) return "";
     return name
       .split(" ")
       .map((n) => n[0])
@@ -1304,12 +1344,27 @@ export function SidebarAccount({ user }: SidebarAccountProps) {
       .toUpperCase();
   };
 
+  const handleLogout = async () => {
+    if (onLogout) {
+        onLogout();
+    } else {
+        // Default logout: redirect to backend logout endpoint which should clear cookies
+        // This URL needs to come from api.config.ts
+        // For now, a placeholder:
+        // window.location.href = getApiUrl("AUTH_LOGOUT");
+        // Or use Remix Form for a POST request if logout is an action
+        console.log("Logout action - implement using Remix form or direct navigation to logout endpoint");
+        window.location.href = "/auth/logout"; // Placeholder, use getApiUrl
+    }
+  };
+
+
   return (
-    <div className="w-full p-3"> {/* Consistent padding */}
+    <div className="w-full p-3">
       <Popover>
         <PopoverTrigger asChild>
           <Button
-            variant="ghost" // Use ghost for a less prominent but interactive trigger
+            variant="ghost"
             className={cn(
               "w-full flex items-center gap-3 px-3 py-2.5 h-auto text-left",
               "text-sm font-medium rounded-md transition-colors",
@@ -1319,7 +1374,7 @@ export function SidebarAccount({ user }: SidebarAccountProps) {
             )}
             aria-label="Open user menu"
           >
-            <Avatar className="size-8 rounded-md"> {/* Shadcn-like rounded-md avatar */}
+            <Avatar className="size-8 rounded-md">
               <AvatarImage src={user.avatar} alt={user.name} />
               <AvatarFallback className="rounded-md bg-sidebar-primary text-sidebar-primary-foreground text-xs">
                 {getInitials(user.name)}
@@ -1333,12 +1388,11 @@ export function SidebarAccount({ user }: SidebarAccountProps) {
           </Button>
         </PopoverTrigger>
         <PopoverContent
-          align="end" // Align to the end of the trigger
-          side="top"    // Position popover above the button
+          align="end"
+          side="top"
           sideOffset={8}
           className="w-[calc(var(--radix-popover-trigger-width)+20px)] min-w-56 p-1.5 rounded-lg shadow-xl bg-popover text-popover-foreground border border-border"
         >
-          {/* User Info in Popover Header */}
           <div className="flex items-center gap-3 p-2.5 border-b border-border mb-1">
             <Avatar className="size-9 rounded-md">
               <AvatarImage src={user.avatar} alt={user.name} />
@@ -1359,19 +1413,14 @@ export function SidebarAccount({ user }: SidebarAccountProps) {
             <Button variant="ghost" className="w-full justify-start gap-2.5 px-2.5 py-2 text-sm h-auto font-normal text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md">
               <Settings2 className="size-4 text-muted-foreground" /> Settings
             </Button>
-            {/* Example Theme Toggle */}
-            {/*
-            <Button
-                variant="ghost"
-                onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-                className="w-full justify-start gap-2.5 px-2.5 py-2 text-sm h-auto font-normal text-popover-foreground hover:bg-accent hover:text-accent-foreground rounded-md"
-            >
-                <Palette className="size-4 text-muted-foreground" />
-                <span>Switch to {theme === "light" ? "Dark" : "Light"} Mode</span>
-            </Button>
-            */}
             <Separator className="my-1 bg-border" />
-            <Button variant="ghost" className="w-full justify-start gap-2.5 px-2.5 py-2 text-sm h-auto font-normal text-destructive hover:bg-destructive/10 hover:text-destructive rounded-md">
+            {/* For Logout, it's better to use a Remix <Form method="post" action="/logout"> or similar */}
+            {/* Or a link to a backend endpoint that clears HttpOnly cookies */}
+            <Button
+              variant="ghost"
+              onClick={handleLogout}
+              className="w-full justify-start gap-2.5 px-2.5 py-2 text-sm h-auto font-normal text-destructive hover:bg-destructive/10 hover:text-destructive rounded-md"
+            >
               <LogOut className="size-4" /> Logout
             </Button>
           </nav>
@@ -1386,6 +1435,7 @@ import * as React from "react";
 import { Plus, type LucideIcon } from "lucide-react";  
 import { Button } from "~/components/ui/button";  
 import { cn } from "~/lib/utils";  
+import { Link } from "@remix-run/react"; // For app logo link
   
 interface SidebarHeaderProps extends React.HTMLAttributes<HTMLDivElement> {  
   appName: string;  
@@ -1401,24 +1451,22 @@ export function SidebarHeader({
 }: SidebarHeaderProps) {  
   return (  
     <div className={cn("flex flex-col gap-4 p-4", className)}>  
-      {/* Logo & App Name */}  
-      <a href="#" className="flex items-center gap-3">  
-        <span className="flex aspect-square size-9 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground transition-colors">  
+      <Link to="/" prefetch="intent" className="flex items-center gap-3 focus:outline-none group">  
+        <span className="flex aspect-square size-9 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground transition-colors group-hover:bg-sidebar-primary/90 group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-offset-2  group-focus-visible:ring-offset-sidebar">  
           <AppIcon className="size-5" />  
         </span>  
-        <span className="font-semibold text-xl tracking-tight text-sidebar-foreground transition-colors">  
+        <span className="font-semibold text-xl tracking-tight text-sidebar-foreground transition-colors group-hover:text-sidebar-foreground/80">  
           {appName}  
         </span>  
-      </a>  
-      {/* + New Chat Button */}  
+      </Link>  
       <Button  
-        variant="default"
+        variant="default" // Ensure this variant uses sidebar-primary colors or adjust
         size="sm"  
-        
         className={cn(  
-          "w-full flex items-center justify-start gap-2 py-1.5 px-1",  
+          "w-full flex items-center justify-start gap-2 py-1.5 px-1", // Reduced padding slightly for "New Chat" for better look if text is short
           "text-sm font-medium rounded-md transition-colors",  
-          "bg-sidebar-primary text-sidebar-primary-foreground",  
+          // Assuming 'default' variant is styled appropriately for primary action in sidebar
+          // If not, explicitly set: "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"  
         )}  
         onClick={onNewChat}  
@@ -1428,82 +1476,96 @@ export function SidebarHeader({
       </Button>  
     </div>  
   );  
-}  --- app/components/app-sidebar.tsx ---
+}--- app/components/app-sidebar.tsx ---
 // components/app-sidebar.tsx
-"use client"; // If any child components use client-side hooks
+"use client";
 
 import * as React from "react";
 import { SidebarHeader as CustomSidebarHeader } from "./sidebar-header";
 import { SidebarAccount } from "./sidebar-account";
-import { SidebarNav } from "./sidebar-nav";
+import { SidebarNav, type NavItem } from "./sidebar-nav"; // Import NavItem
 import {
   Sidebar,
-  SidebarContent, // Primitive from your UI kit
-  SidebarFooter,   // Primitive from your UI kit
-  SidebarHeader,   // Primitive from your UI kit
-  // SidebarRail, // Assuming this is still part of your setup if needed
-} from "~/components/ui/sidebar"; // Adjusted path
-import { cn } from "~/lib/utils"; // Adjusted path
-import { Command } from "lucide-react"; // For the logo
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+} from "~/components/ui/sidebar";
+import { cn } from "~/lib/utils";
+import { Command } from "lucide-react"; // Default app icon
+import { getApiUrl } from "~/lib/api.config"; // For logout
+import { useNavigate } from "@remix-run/react"; // For navigation
 
-// Example data structure inspired by Shadcn's, to be passed down
-// You might fetch this or define it more centrally
-const sidebarData = {
-  appName: "Krivi AI",
+// Define the props AppSidebar expects
+interface AppSidebarComponentProps {
   user: {
-    name: "User Name", // Replace with actual user data
-    email: "user@example.com",
-    avatar: "/avatars/default.png", // Provide a default or user-specific avatar
-  },
-   mainNav: [], // <--- nothing & you already have Chat History heading in SidebarNav  
+    name: string;
+    email: string;
+    avatar: string;
+  };
+  appName: string;
+  mainNav: NavItem[]; // Using NavItem type from sidebar-nav
+  // Add other props that might be passed to the underlying Sidebar primitive
+}
 
-  projectNav: [
-    // Add project-like navigation items here
-  ],
-  secondaryNav: [
-    // Add support/feedback-like items here
-  ],
-};
+// Combine with the Sidebar primitive's props, excluding ones we manage
+type AppSidebarProps = AppSidebarComponentProps & Omit<React.ComponentProps<typeof Sidebar>, keyof AppSidebarComponentProps>;
 
 
-export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
+export function AppSidebar({
+  user,
+  appName,
+  mainNav,
+  className, // from React.ComponentProps<typeof Sidebar>
+  ...props // other props for Sidebar primitive
+}: AppSidebarProps) {
+  const navigate = useNavigate();
+
   const handleNewChat = () => {
     console.log("New Chat clicked");
-    // Implement your new chat logic here
+    // Implement your new chat logic here, e.g., navigate to a new chat route
+    // navigate("/chat/new"); // Example
   };
+
+  const handleLogout = async () => {
+    // Navigate to the backend logout endpoint.
+    // The backend should handle clearing HttpOnly cookies and invalidating the session.
+    // After the backend logout, it should redirect the user, perhaps to the login page.
+    try {
+        const logoutUrl = getApiUrl("AUTH_LOGOUT");
+        // We expect the backend to handle the redirect after logout.
+        // If it just returns a success/failure, then navigate client-side.
+        window.location.href = logoutUrl; // Simplest way to ensure cookies are handled by browser redirect
+    } catch (error) {
+        console.error("Failed to get logout URL:", error);
+        // Fallback or error handling
+        navigate("/login?error=logout_failed");
+    }
+  };
+
 
   return (
     <Sidebar
-      // variant="inset" // If your Sidebar primitive supports this like Shadcn's
-      {...props}
+      {...props} // Pass through other props to the Sidebar primitive
       className={cn(
         "bg-sidebar text-sidebar-foreground border-r border-sidebar-border",
-        props.className
+        className // Allow overriding classes
       )}
     >
-      {/* Using UI Kit's SidebarHeader primitive for the top section */}
-      <SidebarHeader className="p-0"> {/* Remove primitive's padding if custom component handles it */}
+      <SidebarHeader className="p-0">
         <CustomSidebarHeader
-          appName={sidebarData.appName}
-          appIcon={Command}
+          appName={appName}
+          appIcon={Command} // You can make appIcon a prop too if it varies
           onNewChat={handleNewChat}
         />
       </SidebarHeader>
 
-      {/* Using UI Kit's SidebarContent primitive for the scrollable middle section */}
-      <SidebarContent className="flex-1 overflow-y-auto p-0"> {/* Remove primitive's padding if custom component handles it */}
-        <SidebarNav
-          mainNav={sidebarData.mainNav}
-          // Pass other nav sections if defined
-        />
+      <SidebarContent className="flex-1 overflow-y-auto p-0">
+        <SidebarNav mainNav={mainNav} />
       </SidebarContent>
 
-      {/* Using UI Kit's SidebarFooter primitive for the ~ section */}
-      <SidebarFooter className="p-0 mt-auto border-t border-sidebar-border"> {/* Remove primitive's padding */}
-        <SidebarAccount user={sidebarData.user} />
+      <SidebarFooter className="p-0 mt-auto border-t border-sidebar-border">
+        <SidebarAccount user={user} onLogout={handleLogout} />
       </SidebarFooter>
-
-      {/* <SidebarRail /> Potentially, if your UI kit uses this for collapsed state */}
     </Sidebar>
   );
 }--- app/entry.server.tsx ---

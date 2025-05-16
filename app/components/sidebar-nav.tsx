@@ -1,24 +1,24 @@
 // /app/components/sidebar-nav.tsx
-
 import * as React from "react";
+import { Link, useNavigate } from "@remix-run/react"; // Import Link and useNavigate
 import { ChevronRight, type LucideIcon as LucideIconType } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { Button } from "~/components/ui/button";
 import { Separator } from "~/components/ui/separator";
 import { cn } from "~/lib/utils";
-// import { getApiUrl } from "~/lib/api.config"; // Temporarily commented out for direct URL usage below
+import { getApiUrl } from "~/lib/api.config"; // Use this for API calls
 
 type LucideIcon = LucideIconType;
 
 // --- Types ---
-interface NavSubItem {
+export interface NavSubItem { // Exported if needed elsewhere
   id: string;
   title: string;
   href: string;
   isActive?: boolean;
 }
 
-interface NavItem {
+export interface NavItem { // Exported for __app.tsx
   id: string;
   title: string;
   href?: string;
@@ -26,8 +26,7 @@ interface NavItem {
   isActive?: boolean;
   subItems?: NavSubItem[];
   isGroupLabel?: boolean;
-  chatId?: string;
-  onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+  // onClick can be removed if navigation is handled by Link/Navigate
 }
 
 interface SidebarNavProps {
@@ -42,7 +41,6 @@ interface ApiChatSession {
 }
 
 // --- Utility ---
-
 const getStartOfDay = (date: Date): Date => {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
@@ -63,14 +61,10 @@ const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[]
   thirtyDaysAgoStart.setDate(todayStart.getDate() - 30);
 
   const sections: { [key: string]: ApiChatSession[] } = {
-    today: [],
-    yesterday: [],
-    prev7Days: [],
-    prev30Days: [],
+    today: [], yesterday: [], prev7Days: [], prev30Days: [],
   };
 
-  // Ensure sessions are sorted by lastMessageAt descending if not already from API
-  // For example: chatSessions.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
+  chatSessions.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
 
   chatSessions.forEach(session => {
     const sessionDate = new Date(session.lastMessageAt);
@@ -78,21 +72,14 @@ const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[]
     else if (sessionDate >= yesterdayStart) sections.yesterday.push(session);
     else if (sessionDate >= sevenDaysAgoStart) sections.prev7Days.push(session);
     else if (sessionDate >= thirtyDaysAgoStart) sections.prev30Days.push(session);
+    // older items are ignored for now, could add an "Older" section
   });
 
   const createChatNavItem = (session: ApiChatSession): NavItem => ({
     id: `chat-${session.chatId}`,
     title: session.title.length > 30 ? session.title.substring(0, 27) + "..." : session.title,
-    href: `/chat/${session.chatId}`, // This href can be used by Remix's <Link> component
-    chatId: session.chatId,
-    onClick: (e) => {
-      e.preventDefault();
-      // For Remix, prefer client-side navigation using <Link to={...}> or useNavigate()
-      // to avoid full page reloads.
-      // Example: navigate(`/chat/${session.chatId}`);
-      // For now, using window.location.href as per existing structure:
-      window.location.href = `/chat/${session.chatId}`;
-    },
+    href: `/chat/${session.chatId}`, // Use this for Remix <Link>
+    // No onClick needed here as <Link> will handle navigation
   });
 
   if (sections.today.length > 0) {
@@ -116,9 +103,9 @@ const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[]
 };
 
 // --- NavItemDisplay ---
-
 const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item, isSubItem = false }) => {
   const [isOpen, setIsOpen] = React.useState(item.isActive ?? false);
+  const navigate = useNavigate(); // For programmatic navigation if needed
 
   if (item.isGroupLabel) {
     return <div className="px-3 pt-4 pb-1.5 text-[0.8125rem] font-semibold text-sidebar-foreground">
@@ -126,28 +113,28 @@ const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item
     </div>;
   }
 
+  const commonButtonClasses = cn(
+    "w-full justify-start items-center gap-2.5 h-auto px-3 py-1.5 text-[0.8125rem] font-medium",
+    isSubItem && "pl-9 pr-3 py-1.5 text-xs",
+    item.isActive
+      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+    "transition-colors rounded-md"
+  );
+
   // For simple links (including chat history items)
-  // If item.href is a Remix route, consider using <Link to={item.href} prefetch="intent">
-  // instead of <a href={...}> for client-side navigation.
   if (!item.subItems || item.subItems.length === 0) {
     return (
       <Button
         variant="ghost"
-        asChild
-        className={cn(
-          "w-full justify-start items-center gap-2.5 h-auto px-3 py-1.5 text-[0.8125rem] font-medium",
-          isSubItem && "pl-9 pr-3 py-1.5 text-xs", // Indent sub-items
-          item.isActive
-            ? "bg-sidebar-accent text-sidebar-accent-foreground" // Active state
-            : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground", // Default and hover
-          "transition-colors rounded-md"
-        )}
-        title={item.title} // Show full title on hover
+        asChild // Important for Link to take over styling and behavior
+        className={commonButtonClasses}
+        title={item.title}
       >
-        <a href={item.href || "#"} onClick={item.onClick}>
+        <Link to={item.href || "#"} prefetch="intent"> {/* Use Link component */}
           {item.icon && <item.icon className={cn("size-4 shrink-0", isSubItem && "size-3.5")} />}
           <span className="truncate flex-1">{item.title}</span>
-        </a>
+        </Link>
       </Button>
     );
   }
@@ -156,32 +143,34 @@ const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className="w-full">
       <div className="flex items-center">
+        {/* Main part of the collapsible trigger - can be a Link if item.href is primary action */}
         <Button
-          variant="ghost"
-          asChild
-          className={cn(
-            "w-full justify-start items-center gap-2.5 h-auto px-3 py-1.5 text-[0.8125rem] font-medium flex-1",
-            item.isActive && !isOpen // Active but closed
-              ? "bg-sidebar-accent/70 text-sidebar-accent-foreground"
-              : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-            "transition-colors rounded-md"
-          )}
-          title={item.title}
+            variant="ghost"
+            asChild={!!item.href} // Use asChild if item.href exists to make it a Link
+            className={cn(commonButtonClasses, "flex-1")}
+            title={item.title}
+            onClick={!item.href ? (e) => { e.preventDefault(); setIsOpen(!isOpen); } : undefined} // Toggle if not a link
         >
-          <a
-            href={item.href || "#"}
-            onClick={(e) => {
-              if (item.subItems && item.subItems.length > 0) {
-                e.preventDefault(); // Prevent navigation if it's a collapsible trigger
-                setIsOpen(!isOpen);
-              } else if (item.onClick) {
-                item.onClick(e); // Call custom onClick if provided (e.g., for chat items)
-              }
-            }}
-          >
-            {item.icon && <item.icon className="size-4 shrink-0" />}
-            <span className="truncate flex-1">{item.title}</span>
-          </a>
+            {item.href ? (
+                <Link to={item.href} prefetch="intent" onClick={(e) => {
+                    // If it has sub-items, prevent navigation and toggle.
+                    // If it also has an href, this behavior might be complex.
+                    // Typically, a collapsible trigger itself doesn't navigate.
+                    if (item.subItems && item.subItems.length > 0) {
+                        e.preventDefault();
+                        setIsOpen(!isOpen);
+                    }
+                }}>
+                    {item.icon && <item.icon className="size-4 shrink-0" />}
+                    <span className="truncate flex-1">{item.title}</span>
+                </Link>
+            ) : (
+                // If no href, the button itself handles the click for collapsing
+                <>
+                    {item.icon && <item.icon className="size-4 shrink-0" />}
+                    <span className="truncate flex-1">{item.title}</span>
+                </>
+            )}
         </Button>
         <CollapsibleTrigger asChild>
           <Button variant="ghost" size="icon" className="ml-1 size-7 shrink-0">
@@ -190,11 +179,11 @@ const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item
           </Button>
         </CollapsibleTrigger>
       </div>
-      <CollapsibleContent className="pl-3.5 mt-0.5 space-y-0.5"> {/* Indent sub-items */}
+      <CollapsibleContent className="pl-3.5 mt-0.5 space-y-0.5">
         {item.subItems.map((subItem) => (
           <NavItemDisplay
             key={subItem.id}
-            item={{ ...subItem, icon: (subItem as any).icon || (() => null) }} // Pass empty icon for subitems if not defined
+            item={{ ...subItem, icon: (subItem as any).icon || (() => null) }}
             isSubItem
           />
         ))}
@@ -204,7 +193,6 @@ const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item
 };
 
 // --- SidebarNav (Main) ---
-
 export function SidebarNav({ mainNav }: SidebarNavProps) {
   const [chatHistoryNavItems, setChatHistoryNavItems] = React.useState<NavItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = React.useState(true);
@@ -213,48 +201,32 @@ export function SidebarNav({ mainNav }: SidebarNavProps) {
   const refreshChatHistory = React.useCallback(async () => {
     setIsLoadingHistory(true);
     setErrorHistory(null);
-    console.log("[SidebarNav] Refreshing chat history…");
-
     try {
-      // Using direct URL as requested for now:
-      const apiUrl = "https://api-chat.kwikon.club/api/chat/session_list";
-      // When ready, switch back to:
-      // const apiUrl = getApiUrl("CHAT_SESSION_LIST");
-      console.log("[SidebarNav] Fetch URL:", apiUrl);
-
+      const apiUrl = getApiUrl("CHAT_SESSION_LIST"); // Use getApiUrl
       const response = await fetch(apiUrl, {
-        credentials: "include", // Essential for HttpOnly cookies
-        headers: {
-          "Accept": "application/json" // Good practice to specify expected response type
-        }
+        credentials: "include",
+        headers: { "Accept": "application/json" }
       });
-      console.log("[SidebarNav] Status:", response.status, response.statusText);
 
       if (!response.ok) {
-        let errorData: string = `Raw response: ${response.status} ${response.statusText}`;
+        let errorData = `API Error: ${response.status} ${response.statusText}`;
         try {
           if (response.headers.get("content-type")?.includes("application/json")) {
             const jsonData = await response.json();
-            errorData = JSON.stringify(jsonData);
+            errorData = jsonData.message || JSON.stringify(jsonData);
           } else {
             errorData = await response.text();
           }
-        } catch (parseErr) {
-          // console.warn("[SidebarNav] Could not parse error response body:", parseErr);
-          // errorData remains the raw status text if parsing fails
-        }
-        throw new Error(`API request failed: ${response.status} ${response.statusText}. Details: ${errorData}`);
+        } catch (parseErr) { /* ignore, use statusText */ }
+        throw new Error(errorData);
       }
-
       const data: ApiChatSession[] = await response.json();
-      // console.log("[SidebarNav] Data received:", data);
-
       const processedNavItems = processChatHistoryToNavItems(data);
       setChatHistoryNavItems(processedNavItems);
     } catch (err) {
-      // console.error("[SidebarNav] Failed to fetch/process chat history:", err);
-      setErrorHistory(err instanceof Error ? err.message : "An unknown error occurred fetching history.");
-      setChatHistoryNavItems([]); // Clear items on error
+      console.error("[SidebarNav] Failed to fetch/process chat history:", err);
+      setErrorHistory(err instanceof Error ? err.message : "An unknown error occurred.");
+      setChatHistoryNavItems([]);
     } finally {
       setIsLoadingHistory(false);
     }
@@ -265,47 +237,33 @@ export function SidebarNav({ mainNav }: SidebarNavProps) {
   }, [refreshChatHistory]);
 
   return (
-    <div className="flex flex-col h-full p-2 space-y-1"> {/* Main container for sidebar nav content */}
-      {/* Main Navigation Section */}
+    <div className="flex flex-col h-full p-2 space-y-1">
       {mainNav.length > 0 && (
-        <nav className="space-y-0.5"> {/* Adjust gap with space-y-* */}
+        <nav className="space-y-0.5">
           {mainNav.map((item) => <NavItemDisplay key={item.id} item={item} />)}
         </nav>
       )}
 
-      {/* Separator between main nav and chat history */}
-      {mainNav.length > 0 && (isLoadingHistory || chatHistoryNavItems.length > 0 || errorHistory) && (
+      {(mainNav.length > 0 && (isLoadingHistory || chatHistoryNavItems.length > 0 || errorHistory)) && (
         <Separator className="my-2 bg-border/60" />
       )}
 
-      {/* Chat History Title */}
       <div className="px-1 pt-1 pb-1 text-base font-semibold text-sidebar-foreground">
         Chat History
       </div>
 
-      {/* Chat History Section (Scrollable) */}
       <div className="flex-1 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
         {isLoadingHistory ? (
-          <div className="px-3 py-2 text-sm text-sidebar-foreground/70 text-center">
-            Loading history…
-          </div>
+          <div className="px-3 py-2 text-sm text-sidebar-foreground/70 text-center">Loading history…</div>
         ) : errorHistory ? (
           <div className="px-3 py-2 text-sm text-destructive text-center break-words">
-            Error fetching history.<br />
-            <span className="text-xs text-muted-foreground">
-              {/* Show a snippet of the error */}
-              {errorHistory.substring(0, 200)}
-              {errorHistory.length > 200 ? "..." : ""}
-            </span>
+            Error: {errorHistory.substring(0,150)}{errorHistory.length > 150 && "..."}
+            <Button variant="link" size="sm" onClick={refreshChatHistory} className="mt-1">Try again</Button>
           </div>
         ) : chatHistoryNavItems.length > 0 ? (
-          chatHistoryNavItems.map((item) => (
-            <NavItemDisplay key={item.id} item={item} />
-          ))
+          chatHistoryNavItems.map((item) => <NavItemDisplay key={item.id} item={item} />)
         ) : (
-          <div className="px-3 py-2 text-xs text-sidebar-foreground/60 italic">
-            No chat history found.
-          </div>
+          <div className="px-3 py-2 text-xs text-sidebar-foreground/60 italic">No chat history found.</div>
         )}
       </div>
     </div>

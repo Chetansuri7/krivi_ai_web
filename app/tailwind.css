@@ -110,5 +110,30 @@
   }  
   
   
-}  
+} 
 
+
+
+
+.custom-scrollbar {  
+  scrollbar-width: thin;  
+  scrollbar-color: #000 transparent; /* Black thumb, transparent track (Firefox) */  
+}  
+  
+/* Chrome, Edge, Safari */  
+.custom-scrollbar::-webkit-scrollbar {  
+  width: 12px;                  /* Nice, visible thickness */  
+  background: transparent;      /* No track background */  
+}  
+  
+.custom-scrollbar::-webkit-scrollbar-thumb {  
+  border-radius: 8px;           /* Rounded thumb */  
+  background: #000;             /* Pure black thumb */  
+  border: none;                 /* No border */  
+  min-height: 40px;             /* Not strictly required, but keeps the thumb visible */  
+}  
+  
+/* Remove scroll "corner" background */  
+.custom-scrollbar::-webkit-scrollbar-corner {  
+  background: transparent;  
+}  

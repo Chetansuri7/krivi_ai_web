@@ -1,78 +1,92 @@
 // components/app-sidebar.tsx
-"use client"; // If any child components use client-side hooks
+"use client";
 
 import * as React from "react";
 import { SidebarHeader as CustomSidebarHeader } from "./sidebar-header";
 import { SidebarAccount } from "./sidebar-account";
-import { SidebarNav } from "./sidebar-nav";
+import { SidebarNav, type NavItem } from "./sidebar-nav"; // Import NavItem
 import {
   Sidebar,
-  SidebarContent, // Primitive from your UI kit
-  SidebarFooter,   // Primitive from your UI kit
-  SidebarHeader,   // Primitive from your UI kit
-  // SidebarRail, // Assuming this is still part of your setup if needed
-} from "~/components/ui/sidebar"; // Adjusted path
-import { cn } from "~/lib/utils"; // Adjusted path
-import { Command } from "lucide-react"; // For the logo
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+} from "~/components/ui/sidebar";
+import { cn } from "~/lib/utils";
+import { Command } from "lucide-react"; // Default app icon
+import { getApiUrl } from "~/lib/api.config"; // For logout
+import { useNavigate } from "@remix-run/react"; // For navigation
 
-// Example data structure inspired by Shadcn's, to be passed down
-// You might fetch this or define it more centrally
-const sidebarData = {
-  appName: "Krivi AI",
+// Define the props AppSidebar expects
+interface AppSidebarComponentProps {
   user: {
-    name: "User Name", // Replace with actual user data
-    email: "user@example.com",
-    avatar: "/avatars/default.png", // Provide a default or user-specific avatar
-  },
-   mainNav: [], // <--- nothing & you already have Chat History heading in SidebarNav  
+    name: string;
+    email: string;
+    avatar: string;
+  };
+  appName: string;
+  mainNav: NavItem[]; // Using NavItem type from sidebar-nav
+  // Add other props that might be passed to the underlying Sidebar primitive
+}
 
-  projectNav: [
-    // Add project-like navigation items here
-  ],
-  secondaryNav: [
-    // Add support/feedback-like items here
-  ],
-};
+// Combine with the Sidebar primitive's props, excluding ones we manage
+type AppSidebarProps = AppSidebarComponentProps & Omit<React.ComponentProps<typeof Sidebar>, keyof AppSidebarComponentProps>;
 
 
-export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
+export function AppSidebar({
+  user,
+  appName,
+  mainNav,
+  className, // from React.ComponentProps<typeof Sidebar>
+  ...props // other props for Sidebar primitive
+}: AppSidebarProps) {
+  const navigate = useNavigate();
+
   const handleNewChat = () => {
     console.log("New Chat clicked");
-    // Implement your new chat logic here
+    // Implement your new chat logic here, e.g., navigate to a new chat route
+    // navigate("/chat/new"); // Example
   };
+
+  const handleLogout = async () => {
+    // Navigate to the backend logout endpoint.
+    // The backend should handle clearing HttpOnly cookies and invalidating the session.
+    // After the backend logout, it should redirect the user, perhaps to the login page.
+    try {
+        const logoutUrl = getApiUrl("AUTH_LOGOUT");
+        // We expect the backend to handle the redirect after logout.
+        // If it just returns a success/failure, then navigate client-side.
+        window.location.href = logoutUrl; // Simplest way to ensure cookies are handled by browser redirect
+    } catch (error) {
+        console.error("Failed to get logout URL:", error);
+        // Fallback or error handling
+        navigate("/login?error=logout_failed");
+    }
+  };
+
 
   return (
     <Sidebar
-      // variant="inset" // If your Sidebar primitive supports this like Shadcn's
-      {...props}
+      {...props} // Pass through other props to the Sidebar primitive
       className={cn(
         "bg-sidebar text-sidebar-foreground border-r border-sidebar-border",
-        props.className
+        className // Allow overriding classes
       )}
     >
-      {/* Using UI Kit's SidebarHeader primitive for the top section */}
-      <SidebarHeader className="p-0"> {/* Remove primitive's padding if custom component handles it */}
+      <SidebarHeader className="p-0">
         <CustomSidebarHeader
-          appName={sidebarData.appName}
-          appIcon={Command}
+          appName={appName}
+          appIcon={Command} // You can make appIcon a prop too if it varies
           onNewChat={handleNewChat}
         />
       </SidebarHeader>
 
-      {/* Using UI Kit's SidebarContent primitive for the scrollable middle section */}
-      <SidebarContent className="flex-1 overflow-y-auto p-0"> {/* Remove primitive's padding if custom component handles it */}
-        <SidebarNav
-          mainNav={sidebarData.mainNav}
-          // Pass other nav sections if defined
-        />
+      <SidebarContent className="flex-1 overflow-y-auto p-0">
+        <SidebarNav mainNav={mainNav} />
       </SidebarContent>
 
-      {/* Using UI Kit's SidebarFooter primitive for the ~ section */}
-      <SidebarFooter className="p-0 mt-auto border-t border-sidebar-border"> {/* Remove primitive's padding */}
-        <SidebarAccount user={sidebarData.user} />
+      <SidebarFooter className="p-0 mt-auto border-t border-sidebar-border">
+        <SidebarAccount user={user} onLogout={handleLogout} />
       </SidebarFooter>
-
-      {/* <SidebarRail /> Potentially, if your UI kit uses this for collapsed state */}
     </Sidebar>
   );
 }

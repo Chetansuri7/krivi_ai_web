@@ -5,7 +5,7 @@ import {
   Scripts,
   ScrollRestoration,
 } from "@remix-run/react";
-import type { LinksFunction } from "@remix-run/node";
+import type { LinksFunction } from "@remix-run/node"; // No loader needed here if __app.tsx handles auth
 
 import "./tailwind.css";
 
@@ -42,5 +42,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  // This Outlet will render __app.tsx (for protected routes) or login.tsx, etc.
   return <Outlet />;
 }
