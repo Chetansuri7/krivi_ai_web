@@ -44,7 +44,7 @@ export function AppSidebar({
   const handleNewChat = () => {
     console.log("New Chat clicked");
     // Implement your new chat logic here, e.g., navigate to a new chat route
-    // navigate("/chat/new"); // Example
+    navigate("/"); // This will navigate to the root "/"  
   };
 
   const handleLogout = async () => {
@@ -52,14 +52,14 @@ export function AppSidebar({
     // The backend should handle clearing HttpOnly cookies and invalidating the session.
     // After the backend logout, it should redirect the user, perhaps to the login page.
     try {
-        const logoutUrl = getApiUrl("AUTH_LOGOUT");
-        // We expect the backend to handle the redirect after logout.
-        // If it just returns a success/failure, then navigate client-side.
-        window.location.href = logoutUrl; // Simplest way to ensure cookies are handled by browser redirect
+      const logoutUrl = getApiUrl("AUTH_LOGOUT");
+      // We expect the backend to handle the redirect after logout.
+      // If it just returns a success/failure, then navigate client-side.
+      window.location.href = logoutUrl; // Simplest way to ensure cookies are handled by browser redirect
     } catch (error) {
-        console.error("Failed to get logout URL:", error);
-        // Fallback or error handling
-        navigate("/login?error=logout_failed");
+      console.error("Failed to get logout URL:", error);
+      // Fallback or error handling
+      navigate("/login?error=logout_failed");
     }
   };
 

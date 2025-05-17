@@ -76,13 +76,14 @@ export const AImodels: AIModelConfig[] = [
   {
     displayName: "GPT-4o Mini",
     model: "gpt-4o-mini",
-    provider: "azure"
+    provider: "azure",
+    isDefault: true, // Marking this as default as per your previous defaultModelConfig
+
   },
   {
     displayName: "Gemini 2.5 flash", // Updated display name to match model version (optional, adjust as needed)
     model: "gemini-2.5-flash-preview-04-17", // From your example payload
     provider: "google",
-    isDefault: true, // Marking this as default as per your previous defaultModelConfig
   },
   {
     displayName: "Gemini 2.0 flash", // Updated display name to match model version (optional, adjust as needed)
@@ -284,11 +285,12 @@ export function useIsMobile() {
 // app/hooks/useScrollToBottom.ts
 
 import { useRef, useState, useEffect, useCallback } from 'react';
+import { Message } from '~/components/chat/MessageItem';
 
 const INTERSECTION_THRESHOLD_PX = 30; // MODIFIED: Was 50, now 30
 const USER_SCROLL_DEBOUNCE_MS = 150;
 
-export function useScrollToBottom() {
+export function useScrollToBottom(messages: Message[]) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -440,6 +442,7 @@ export default function App() {
   // This Outlet will render __app.tsx (for protected routes) or login.tsx, etc.
   return <Outlet />;
 }--- app/routes/__app.tsx ---
+// app/routes/__app.tsx
 import type { LoaderFunctionArgs } from "@remix-run/node";  
 import { json } from "@remix-run/node";  
 import { Outlet, useLoaderData } from "@remix-run/react";  
@@ -448,7 +451,9 @@ import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";
 import { AppSidebar } from "~/components/app-sidebar";  
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";  
 import type { NavItem } from "~/components/sidebar-nav";  
-import { Separator } from "~/components/ui/separator";  
+import { Separator } from "~/components/ui/separator";
+import { StreamingChatProvider } from "~/components/chat/streaming-chat-context";
+// ADD THIS IMPORT
   
 export interface AppLoaderData {  
   user: AuthenticatedUserDetails;  
@@ -458,7 +463,6 @@ export interface AppLoaderData {
   
 export async function loader({ request }: LoaderFunctionArgs) {  
   await requireAuth(request);  
-  // Provide only dummy data, until real user API is available  
   return json<AppLoaderData>({  
     user: {  
       id: "dummy",  
@@ -480,61 +484,54 @@ export default function AppLayout() {
   };  
   
   return (  
-    <SidebarProvider>  
-      <AppSidebar  
-        user={sidebarUser}  
-        appName={appName}  
-        mainNav={mainNavItems}  
-      />  
-      {/* This inset is the "main section" right of the sidebar */}  
-      <SidebarInset>  
-        {/* COLUMN FLEX for main app area */}  
-        <div className="relative flex flex-col h-[100dvh] min-h-0 w-full">  
-          {/* The main column, taking whole viewport height */}  
-            
-          {/*   
-            Responsive header height:   
-            - 62px on md+ (desktop+)  
-            - 31px on mobile  
-           */}  
-          <header  
-            className="  
-              sticky top-0 left-0 right-0 z-30 flex  
-              h-[41px] md:h-[62px]  
-              shrink-0 items-center gap-2 border-b border-border bg-background  
-            "  
-          >  
-            <div className="flex items-center gap-2 px-4">  
-              <SidebarTrigger className="-ml-1" />  
-              <Separator orientation="vertical" className="mr-2 h-4 bg-border" />  
-            </div>  
-          </header>  
-  
-          {/* Main body below topbar, flexes to fill available height */}  
-          <main className="relative flex-1 min-h-0 w-full flex flex-col">  
-            {/* render whatever the route wants (in your case, ChatPageLayout) */}  
-            <Outlet />  
-          </main>  
-        </div>  
-      </SidebarInset>  
-    </SidebarProvider>  
+    // WRAP THE ENTIRE SIDEBAR PROVIDER (OR JUST THE OUTLET PART IF SIDEBAR IS NOT CHAT RELATED)
+    // WITH STREAMINGCHATPROVIDER. For chat apps, often the whole app structure is relevant.
+    <StreamingChatProvider> 
+      <SidebarProvider>  
+        <AppSidebar  
+          user={sidebarUser}  
+          appName={appName}  
+          mainNav={mainNavItems}  
+        />  
+        <SidebarInset>  
+          <div className="relative flex flex-col h-[100dvh] min-h-0 w-full">  
+            <header  
+              className="  
+                sticky top-0 left-0 right-0 z-30 flex  
+                h-[41px] md:h-[62px]  
+                shrink-0 items-center gap-2 border-b border-border bg-background  
+              "  
+            >  
+              <div className="flex items-center gap-2 px-4">  
+                <SidebarTrigger className="-ml-1" />  
+                <Separator orientation="vertical" className="mr-2 h-4 bg-border" />  
+              </div>  
+            </header>  
+            <main className="relative flex-1 min-h-0 w-full flex flex-col">  
+              {/* Outlet is where your /chat and /chat/:id routes render */}
+              <Outlet /> 
+            </main>  
+          </div>  
+        </SidebarInset>  
+      </SidebarProvider>
+    </StreamingChatProvider> 
   );  
-}  --- app/routes/__app.chat.$chatId.tsx ---
+}--- app/routes/__app.chat.$chatId.tsx ---
 // app/routes/__app.chat.$chatId.tsx
-import { useLoaderData, useLocation } from "@remix-run/react"; // Added useLocation
+import { useLoaderData, useLocation, useParams } from "@remix-run/react";
 import { json, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
 import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
 import type { Message } from "~/components/chat/MessageItem";
 import { API_HISTORY_URL_BASE } from "~/lib/ai-models";
 
+// ... (meta function and loader remain the same)
 export const meta: MetaFunction = ({ params }) => [{ title: `Chat ${params.chatId ? `- ${params.chatId.substring(0,8)}` : ''} | Krivi AI` }];
 
 interface LoaderData {
   chatId: string;
   initialMessages: Message[];
   error?: string;
-  fromNewChatFlow?: boolean; // From navigation state
 }
 
 export async function loader({ request, params }: LoaderFunctionArgs): Promise<ReturnType<typeof json<LoaderData>>> {
@@ -542,17 +539,11 @@ export async function loader({ request, params }: LoaderFunctionArgs): Promise<R
   const chatId = params.chatId;
 
   if (!chatId) {
-    throw new Response("Chat ID missing", { status: 400 });
+    throw new Response("Chat ID missing in params", { status: 404 });
   }
 
-  // Check if this load is due to navigation from a new chat flow (see ChatPageLayout navigate state)
-  // In a real app, you might get `location.state` on the client, but loader runs on server.
-  // The `fromNewChatFlow` flag is more illustrative for client-side logic post-load.
-  // For the loader, we always try to fetch history if a chatId is present.
-  // The client can then decide whether to use loader messages or state messages.
-
   let messagesFromHistory: Message[] = [];
-  const historyUrl = `${API_HISTORY_URL_BASE}${chatId}/history?limit=50`;
+  const historyUrl = `${API_HISTORY_URL_BASE.replace(/\/$/, '')}/${chatId}/history?limit=50`;
 
   try {
     const response = await fetch(historyUrl, {
@@ -564,44 +555,51 @@ export async function loader({ request, params }: LoaderFunctionArgs): Promise<R
       const data = await response.json();
       if (data.messages && Array.isArray(data.messages)) {
         messagesFromHistory = data.messages.map((msg: any) => ({
-          id: msg.id || crypto.randomUUID(), role: msg.role, content: msg.content, createdAt: msg.createdAt,
+          id: msg.id || crypto.randomUUID(), 
+          role: msg.role, 
+          content: msg.content, 
+          timestamp: msg.createdAt || msg.timestamp ? new Date(msg.createdAt || msg.timestamp).getTime() : undefined,
         }));
       }
     } else {
-      // ... (error handling as before)
-      console.error(`Failed to fetch chat history for ${chatId}: ${response.status}`);
+      console.error(`Failed to fetch chat history for ${chatId}: ${response.status} ${response.statusText}`);
       return json({ chatId, initialMessages: [], error: `Failed to load history: ${response.status}` });
     }
   } catch (error: any) {
-    // ... (error handling as before)
     console.error(`Error fetching chat history for ${chatId}:`, error);
     return json({ chatId, initialMessages: [], error: `Error loading chat: ${error.message}` });
   }
   return json({ chatId, initialMessages: messagesFromHistory });
 }
 
+
 export default function ChatWithIdPage() {
   const loaderData = useLoaderData<LoaderData>();
-  const location = useLocation(); // Get location to access state
+  const location = useLocation();
+  const params = useParams(); // Use params for the key and current ID
 
-  // Prefer messages from navigation state if it's from the new chat flow.
-  // This provides a smoother UX by showing the already typed messages immediately.
-  const messagesFromState = (location.state as { initialMessages?: Message[], fromNewChatFlow?: boolean })?.initialMessages;
-  const isFromNewChatFlow = (location.state as { fromNewChatFlow?: boolean })?.fromNewChatFlow;
+  const navState = location.state as { initialMessages?: Message[], fromNewChatFlow?: boolean } | null;
   
-  const finalInitialMessages = (isFromNewChatFlow && messagesFromState && messagesFromState.length > 0) 
-                               ? messagesFromState 
-                               : loaderData.initialMessages;
+  // Default to loader data. ChatPageLayout will further refine based on context and navState.
+  let finalInitialMessages = loaderData.initialMessages;
 
-  // When navigating between different chat IDs, `loaderData.chatId` will change.
-  // This change in prop to `ChatPageLayout` triggers its internal useEffect for cleanup/reset.
-  // We also KEY ChatPageLayout by `loaderData.chatId` to ensure a full re-mount
-  // when switching between different existing chats. This is a robust way to reset all child state.
+  // This logic is simplified because ChatPageLayout's Effect 1 now has more robust handling
+  // of messages from navState vs. loaderData vs. existing context state.
+  if (navState?.fromNewChatFlow && navState.initialMessages && params.chatId === loaderData.chatId) {
+      // We can still prefer navState messages if it's an immediate navigation
+      // and ChatPageLayout will reconcile with context.
+      finalInitialMessages = navState.initialMessages;
+  }
+  
+  if (loaderData.error) {
+    console.error("Error in loader for ChatWithIdPage:", loaderData.error);
+  }
+
   return (
     <ChatPageLayout
-      key={loaderData.chatId} // CRITICAL: Re-mounts ChatPageLayout when navigating between different chat IDs
-      initialChatId={loaderData.chatId}
-      initialMessages={finalInitialMessages}
+      key={params.chatId} 
+      initialChatIdFromLoader={loaderData.chatId} // Pass loader's chatId
+      initialMessagesProp={finalInitialMessages}
     />
   );
 }--- app/routes/login.tsx ---
@@ -743,30 +741,35 @@ export default function LoginPage() {
   );  
 }  --- app/routes/__app._index.tsx ---
 // app/routes/__app._index.tsx
-import { useLoaderData } from "@remix-run/react";
 import { json, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { requireAuth } from "~/lib/auth.server";
+import { useLoaderData } from "@remix-run/react";
 import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
-import type { Message } from "~/components/chat/MessageItem"; // Adjust path
+import { requireAuth } from "~/lib/auth.server";
+import type { Message } from "~/components/chat/MessageItem";
 
 export const meta: MetaFunction = () => [{ title: "New Chat | Krivi AI" }];
 
 export async function loader({ request }: LoaderFunctionArgs) {
   await requireAuth(request);
-  // For a new chat at the app root, initialChatId is null.
-  // No initial messages unless we implement "restore unsaved new chat" later.
-  return json({ initialChatId: null, initialMessages: [] });
+  return json({
+    initialChatId: null,
+    initialMessages: [],
+  });
 }
 
 export default function AppRootNewChatPage() {
-  const { initialChatId, initialMessages } = useLoaderData<{ 
-    initialChatId: null; 
-    initialMessages: Message[]; 
+  const { initialChatId, initialMessages } = useLoaderData<{
+    initialChatId: null;
+    initialMessages: Message[];
   }>();
 
-  // Crucially, ChatPageLayout itself is NOT keyed here.
-  // Its internal logic handles the "new chat" state based on initialChatId being null.
-  return <ChatPageLayout initialChatId={initialChatId} initialMessages={initialMessages} />;
+  return (
+    <ChatPageLayout
+      key="new-chat-page" // Stable key for the new chat page instance
+      initialChatIdFromLoader={initialChatId}
+      initialMessagesProp={initialMessages}
+    />
+  );
 }--- app/entry.client.tsx ---
 /**
  * By default, Remix will handle hydrating your app on the client for you.
@@ -1076,76 +1079,72 @@ export function SidebarNav({ mainNav }: SidebarNavProps) {
 }  --- app/components/Markdown.tsx ---
 import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
-import type { Components, ExtraProps } from "react-markdown";
+import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { FiCopy, FiCheck } from "react-icons/fi";
 import "highlight.js/styles/atom-one-dark.css";
-
 import type {
   Element as ProjectHastElement,
   ElementContent as ProjectHastElementContent,
 } from "hast";
 
-// Utility to robustly extract text content (for copy)
+// Utility to robustly extract text content (for copy)  
 const extractText = (nodes?: ProjectHastElementContent[]): string =>
   !nodes
     ? ""
     : nodes
-        .map((node) => {
-          if (node.type === "text") {
-            return node.value || "";
-          }
-          if (node.type === "element" && node.children) {
-            return extractText(node.children as ProjectHastElementContent[]);
-          }
-          return "";
-        })
-        .join("");
+      .map((node) => {
+        if (node.type === "text") {
+          return node.value || "";
+        }
+        if (node.type === "element" && node.children) {
+          return extractText(node.children as ProjectHastElementContent[]);
+        }
+        return "";
+      })
+      .join("");
 
-// Component Start
+// Props for the Markdown component  
 interface MarkdownProps {
   children: string;
   className?: string;
 }
 
-// Define the props for the custom code component,
-// matching react-markdown's expected CodeProps structure.
+// Define the props for the custom code component  
 type CustomCodeRendererProps = React.DetailedHTMLProps<
-  React.HTMLAttributes<HTMLElement>, // Includes className, style, etc.
+  React.HTMLAttributes<HTMLElement>,
   HTMLElement
-> &
-  ExtraProps & { // Includes node?: Element (HAST)
-    inline?: boolean; // Specific to code components
-    // children will be provided by React.FC or as part of props
-  };
+> & {
+  inline?: boolean;
+  node?: ProjectHastElement;
+};
 
 const CustomCodeRenderer: React.FC<CustomCodeRendererProps> = ({
   node,
   inline,
-  className, // This is the className for syntax highlighting (e.g., "language-js")
+  className,
   children,
-  ...props // Other HTML attributes for the <code> element
+  ...props
 }) => {
   const match = /language-(\w+)/.exec(className || "");
-  let language = match ? match[1] : undefined;
-  if (language === "null" || language === "text" || language === "plaintext") language = undefined;
-
-  const isHeuristicInline =
-    node?.position?.start?.line === node?.position?.end?.line && !language;
+  const language = match ? match[1] : "plaintext";
 
   const contentString = React.Children.toArray(children)
-    .map(child => (typeof child === 'string' || typeof child === 'number') ? child.toString() : '')
-    .join('');
-  const isContentSingleLine = !contentString.includes("\n");
+    .map((child) =>
+      typeof child === "string" || typeof child === "number"
+        ? child.toString()
+        : ""
+    )
+    .join("");
 
-  if (inline === true || (inline !== false && (isHeuristicInline || isContentSingleLine))) {
+  const [copied, setCopied] = useState(false);
+
+  // For inline code, use a simpler renderer  
+  if (inline) {
     return (
       <code
-        // For inline code, we might want to merge the incoming className (if any from markdown like ```text my-class)
-        // with our styling classes. However, react-markdown usually puts language in className.
-        // For simple inline, the syntax highlighting className might not be relevant.
-        className={`bg-muted/50 text-foreground px-1.5 py-0.5 rounded font-mono text-sm ${className || ""}`}
+        className="px-1 py-0.5 rounded bg-muted font-mono text-sm"
         {...props}
       >
         {children}
@@ -1153,140 +1152,127 @@ const CustomCodeRenderer: React.FC<CustomCodeRendererProps> = ({
     );
   }
 
-  const rawCodeContent =
-    node && node.children
-      ? extractText(node.children as ProjectHastElementContent[])
-      : contentString;
-  const cleanedCodeForCopy = rawCodeContent.trim();
-
-  const [copied, setCopied] = useState(false);
-
+  // Full code block rendering  
   return (
-    <div className="relative rounded-lg overflow-hidden shadow-sm my-4 border border-border bg-card/50 dark:bg-zinc-900/50">
+    <div className="relative rounded-lg overflow-hidden shadow-sm my-4 border border-border bg-card/50 dark:bg-zinc-900/50 w-full">
+      {/* Code Header */}
       <div className="bg-muted/70 dark:bg-zinc-800/70 text-muted-foreground py-1.5 px-4 font-mono text-xs flex items-center justify-between border-b border-border">
-        {language ? (
-          <span className="uppercase tracking-wider">{language}</span>
-        ) : (
-          <span>code</span>
-        )}
+        <span className="uppercase tracking-wider">{language}</span>
         <button
-          className="bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded px-2 py-0.5 text-xs transition-colors flex items-center gap-1 border border-transparent hover:border-border"
+          className="bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded px-2 py-0.5 text-xs flex items-center gap-1 border border-transparent hover:border-border"
           onClick={() => {
-            navigator.clipboard.writeText(cleanedCodeForCopy)
+            navigator.clipboard
+              .writeText(contentString.trim())
               .then(() => {
                 setCopied(true);
                 setTimeout(() => setCopied(false), 1500);
-              }).catch((err) => {
-                console.error("Failed to copy:", err);
-                setCopied(false)
-              });
+              })
+              .catch((err) => console.error("Failed to copy:", err));
           }}
           type="button"
           aria-label="Copy code to clipboard"
         >
-          {copied ? <FiCheck size={14} className="text-green-500" /> : <FiCopy size={14} />}
+          {copied ? (
+            <FiCheck size={14} className="text-green-500" />
+          ) : (
+            <FiCopy size={14} />
+          )}
         </button>
       </div>
-      <pre className="p-4 text-sm font-mono text-foreground overflow-x-auto" style={{ margin: 0, backgroundColor: "transparent" }}>
-        {/* The `className` (e.g., "language-js") is passed to the inner <code> for rehype-highlight to work */}
-        {/* `props` contains any other HTML attributes for the <code> element */}
-        <code className={className} {...props}>
-          {children}
-        </code>
-      </pre>
+      {/* Code Content */}
+      <div className="overflow-x-auto w-full">
+        <pre
+          className="p-4 text-sm font-mono text-foreground"
+          style={{
+            margin: 0,
+            tabSize: 2,
+          }}
+        >
+          <code className={`${className || ""}`} {...props}>
+            {children}
+          </code>
+        </pre>
+      </div>
     </div>
   );
 };
 
-// Props for custom list item component
-type ListItemComponentProps = React.LiHTMLAttributes<HTMLLIElement> & ExtraProps & {
-  checked?: boolean | null;
-  ordered?: boolean;
-};
-
-const CustomListItemRenderer: React.FC<ListItemComponentProps> = ({
-  children,
-  checked,
-  ordered,
-  ...props
-}) => {
-  if (typeof checked === "boolean") {
-    return (
-      <li
-        className="flex items-start gap-2 my-1.5 ml-0"
-        style={{ listStyle: "none" }}
-        {...props}
-      >
-        <span className="pt-0.5">
-          {checked ? (
-            <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="20" height="20" x="2" y="2" rx="4" fill="currentColor" fillOpacity="0.12"/><path d="M8 12.5l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          ) : (
-            <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="20" height="20" x="2" y="2" rx="4" fill="currentColor" fillOpacity="0.06"/></svg>
-          )}
-        </span>
-        <span className={checked ? "line-through text-muted-foreground" : ""}>
-          {children}
-        </span>
-      </li>
-    );
-  }
-  return (
-    <li
-      className={`ml-6 mb-1.5 ${ordered ? "list-decimal" : "list-disc"}`}
-      {...props}
-    >
-      {children}
-    </li>
-  );
-};
-
-
+// Custom markdown components overriding ReactMarkdown defaults  
 const markdownComponents: Components = {
   p: (props) => (
-    <p className="my-3 leading-relaxed text-base" {...props} />
+    <p
+      className="my-3 leading-relaxed text-base w-full break-words"
+      {...props}
+    />
   ),
-  code: CustomCodeRenderer, // Assign the explicitly typed component
-  li: CustomListItemRenderer, // Assign the explicitly typed component for consistency
-  h1: (props) => (
-    <h1 className="text-3xl font-bold my-4 pb-2 border-b border-border" {...props} />
+  code: CustomCodeRenderer,
+
+
+  pre: (props) => (
+    <pre className="w-full" {...props} />
   ),
-  h2: (props) => (
-    <h2 className="text-2xl font-semibold my-3 pb-1 border-b border-border" {...props} />
-  ),
-  h3: (props) => (
-    <h3 className="text-xl font-semibold my-2" {...props} />
-  ),
-  h4: (props) => (
-    <h4 className="text-lg font-semibold my-1.5" {...props} />
-  ),
-  h5: (props) => (
-    <h5 className="text-base font-semibold my-1" {...props} />
-  ),
-  h6: (props) => (
-    <h6 className="text-sm font-semibold my-1 text-muted-foreground" {...props} />
-  ),
-  blockquote: (props) => (
-    <blockquote className="my-3 pl-4 border-l-4 border-primary/50 italic text-muted-foreground bg-muted/20 py-2" {...props} />
-  ),
+
   table: (props) => (
-    <div className="my-4 overflow-x-auto border border-border rounded-md">
+    <div className="my-4 overflow-x-auto border border-border rounded-md w-full">
       <table className="min-w-full divide-y divide-border" {...props} />
     </div>
   ),
-  thead: (props) => <thead className="bg-muted/50 dark:bg-zinc-800/50" {...props} />,
-  tbody: (props) => <tbody className="divide-y divide-border bg-card" {...props} />,
-  tr: (props) => <tr className="hover:bg-muted/30 dark:hover:bg-zinc-700/30 transition-colors" {...props} />,
-  th: (props) => <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider" {...props} />,
-  td: (props) => <td className="px-4 py-2.5 text-sm text-foreground" {...props} />,
-  a: (props) => <a className="text-primary hover:underline" target="_blank" rel="noopener noreferrer" {...props} />,
-  ul: (props) => <ul className="my-3 ml-6 list-disc space-y-1" {...props} />,
-  ol: (props) => <ol className="my-3 ml-6 list-decimal space-y-1" {...props} />,
-  hr: (props) => <hr className="my-4 border-border" {...props} />,
+  tr: (props) => (
+    <tr
+      className="hover:bg-muted/30 dark:hover:bg-zinc-700/30 transition-colors"
+      {...props}
+    />
+  ),
+  th: (props) => (
+    <th
+      className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider"
+      {...props}
+    />
+  ),
+  td: (props) => (
+    <td
+      className="px-4 py-2.5 text-sm text-foreground break-words"
+      {...props}
+    />
+  ),
+  img: (props) => (
+    <img
+      className="max-w-full h-auto rounded-md my-4"
+      {...props}
+      alt={props.alt || "Image"}
+    />
+  ),
+  blockquote: (props) => (
+    <blockquote
+      className="border-l-4 border-muted pl-4 italic my-4 text-muted-foreground"
+      {...props}
+    />
+  ),
+  ul: (props) => (
+    <ul className="list-disc pl-6 my-4 space-y-2" {...props} />
+  ),
+  ol: (props) => (
+    <ol className="list-decimal pl-6 my-4 space-y-2" {...props} />
+  ),
+  li: (props) => <li className="mb-1" {...props} />,
+  h1: (props) => <h1 className="text-2xl font-bold mt-6 mb-4" {...props} />,
+  h2: (props) => <h2 className="text-xl font-bold mt-5 mb-3" {...props} />,
+  h3: (props) => <h3 className="text-lg font-bold mt-4 mb-2" {...props} />,
+  h4: (props) => <h4 className="text-base font-bold mt-3 mb-2" {...props} />,
+  a: (props) => (
+    <a
+      className="text-primary underline hover:text-primary/80"
+      target="_blank"
+      rel="noopener noreferrer"
+      {...props}
+    />
+  ),
 };
 
+// Main Markdown Component  
 export function Markdown({ children, className }: MarkdownProps) {
   return (
-    <div className={className}>
+    <div className={`w-full ${className || ""}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
@@ -1297,7 +1283,7 @@ export function Markdown({ children, className }: MarkdownProps) {
       </ReactMarkdown>
     </div>
   );
-}--- app/components/sidebar-account.tsx ---
+}  --- app/components/sidebar-account.tsx ---
 // components/sidebar-account.tsx
 "use client";
 
@@ -1477,129 +1463,109 @@ export function ModelSelector({
     </div>
   );
 }--- app/components/chat/ChatInputBar.tsx ---
-// app/components/ChatInputBar.tsx
+// app/components/chat/ChatInputBar.tsx
 import React, { useRef, useEffect } from 'react';
-import { ArrowUp, Paperclip, Settings2, ChevronDown as SelectChevronDown } from 'lucide-react'; // Renamed ChevronDown
+import { ArrowUp, Paperclip, Settings2 } from 'lucide-react';
 import type { AIModelConfig } from '~/lib/ai-models';
-// Assuming isProbablyMobile exists, if not, you can mock it or remove its usage for this stub
+import { ModelSelector } from './ModelSelector'; // Import ModelSelector
+
 const isProbablyMobile = () => typeof window !== 'undefined' && window.innerWidth < 768;
 
-
 interface ChatInputBarProps {
-input: string;
-onInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
-onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
-isLoading: boolean;
-availableModels: AIModelConfig[];
-selectedModel: AIModelConfig;
-onModelChange: (model: AIModelConfig) => void;
+  input: string;
+  onInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+  isLoading: boolean;
+  availableModels: AIModelConfig[];
+  selectedModel: AIModelConfig;
+  onModelChange: (model: AIModelConfig) => void;
 }
 
 const MIN_TEXTAREA_HEIGHT_REM = 1.625;
-const TEXTAREA_PADDING_Y_PX = 20;
-const MAX_TEXTAREA_HEIGHT_PX = 144;
+const TEXTAREA_PADDING_Y_PX = 20; 
+const MAX_TEXTAREA_HEIGHT_PX = 144; 
 
 export function ChatInputBar({
-input,
-onInputChange,
-onSubmit,
-isLoading,
-availableModels,
-selectedModel,
-onModelChange,
+  input,
+  onInputChange,
+  onSubmit,
+  isLoading,
+  availableModels,
+  selectedModel,
+  onModelChange,
 }: ChatInputBarProps) {
-const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-useEffect(() => {
+  useEffect(() => {
     const textarea = textareaRef.current;
     if (textarea) {
-    textarea.style.height = 'auto';
-    const scrollHeight = textarea.scrollHeight;
-    const newHeight = Math.min(scrollHeight, MAX_TEXTAREA_HEIGHT_PX);
-    textarea.style.height = `${newHeight}px`;
+      textarea.style.height = 'auto'; 
+      const scrollHeight = textarea.scrollHeight;
+      const newHeight = Math.min(scrollHeight, MAX_TEXTAREA_HEIGHT_PX);
+      textarea.style.height = `${newHeight}px`;
     }
-}, [input]);
+  }, [input]);
 
-const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const mobile = isProbablyMobile();
-    if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey)) return;
-    if (mobile && e.key === 'Enter') return;
+    if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey)) return; 
+    if (mobile && e.key === 'Enter') return; 
     if (e.key === 'Enter' && !mobile) {
-    e.preventDefault();
-    if (!isLoading && (input || '').trim()) {
+      e.preventDefault();
+      if (!isLoading && (input || '').trim()) {
         const form = e.currentTarget.form;
         if (form) form.requestSubmit();
+      }
     }
-    }
-};
+  };
 
-const handleModelSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const modelIdentifier = e.target.value;
-    const provider = e.target.options[e.target.selectedIndex].dataset.provider;
-    const newSelectedModel = availableModels.find(
-    (m) => m.model === modelIdentifier && m.provider === provider
-    );
-    if (newSelectedModel) onModelChange(newSelectedModel);
-};
+  const isSendDisabled = isLoading || !(input || '').trim();
 
-const isSendDisabled = isLoading || !(input || '').trim();
-
-return (
+  return (
     <div className="w-full flex-shrink-0">
-    <form
+      <form
         onSubmit={onSubmit}
         className="relative mx-auto flex w-full flex-col rounded-xl bg-card p-2.5 shadow-xl ring-1 ring-border sm:p-3"
-    >
+      >
         <textarea
-        ref={textareaRef}
-        value={input || ''}
-        onChange={onInputChange}
-        onKeyDown={handleTextareaKeyDown}
-        placeholder={selectedModel ? `Ask ${selectedModel.displayName}...` : 'Select a model...'}
-        rows={1}
-        className="w-full resize-none overflow-y-auto rounded-lg border-none bg-transparent px-3 py-2.5 text-base text-foreground outline-none placeholder:text-muted-foreground focus:ring-0"
-        style={{
+          ref={textareaRef}
+          value={input || ''}
+          onChange={onInputChange}
+          onKeyDown={handleTextareaKeyDown}
+          placeholder={selectedModel ? `Ask ${selectedModel.displayName}...` : 'Select a model...'}
+          rows={1}
+          className="w-full resize-none overflow-y-auto rounded-lg border-none bg-transparent px-3 py-2.5 text-base text-foreground outline-none placeholder:text-muted-foreground focus:ring-0"
+          style={{
             minHeight: `calc(${MIN_TEXTAREA_HEIGHT_REM}rem + ${TEXTAREA_PADDING_Y_PX}px)`,
             maxHeight: `${MAX_TEXTAREA_HEIGHT_PX}px`,
-        }}
-        disabled={isLoading}
-        aria-label="Chat message input"
+          }}
+          disabled={isLoading}
+          aria-label="Chat message input"
         />
         <div className="mt-2 flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-            <div className="relative">
-            <select
-                value={selectedModel?.model || ''}
-                onChange={handleModelSelectChange}
-                disabled={isLoading || !availableModels || availableModels.length === 0}
-                className="appearance-none rounded-lg border border-input bg-background py-1.5 pl-3 pr-7 text-xs font-medium shadow-sm hover:border-primary focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-60"
-                aria-label="Select AI Model"
-            >
-                {(!availableModels || availableModels.length === 0) && (<option value="">Loading...</option>)}
-                {availableModels.map((m) => (
-                <option key={`${m.provider}-${m.model}`} value={m.model} data-provider={m.provider}>
-                    {m.displayName}
-                </option>
-                ))}
-            </select>
-            <SelectChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            </div>
-        </div>
-        <div className="flex items-center gap-1 sm:gap-1.5">
+          <div className="flex items-center gap-1.5">
+            <ModelSelector
+              models={availableModels}
+              selectedModel={selectedModel}
+              onModelChange={onModelChange}
+              disabled={isLoading || !availableModels || availableModels.length === 0}
+            />
+          </div>
+          <div className="flex items-center gap-1 sm:gap-1.5">
             <button type="button" className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:opacity-50" disabled={true} title="Attach file (soon)">
-            <Paperclip size={18} strokeWidth={2} />
+              <Paperclip size={18} strokeWidth={2} />
             </button>
             <button type="button" className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:opacity-50" disabled={true} title="Model options (soon)">
-            <Settings2 size={18} strokeWidth={2} />
+              <Settings2 size={18} strokeWidth={2} />
             </button>
             <button type="submit" className="flex items-center justify-center rounded-lg bg-primary px-3 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={isSendDisabled} title="Send message">
-            <ArrowUp size={20} strokeWidth={2.25} />
+              <ArrowUp size={20} strokeWidth={2.25} />
             </button>
+          </div>
         </div>
-        </div>
-    </form>
+      </form>
     </div>
-);
+  );
 }--- app/components/chat/MessageList.tsx ---
 // app/components/MessageList.tsx
 import type { RefObject } from 'react';
@@ -1607,37 +1573,27 @@ import type { Message } from './MessageItem'; // Assuming MessageItem exports Me
 import { MessageItem } from './MessageItem';
 
 interface MessageListProps {
-messages: Message[];
-isLoading: boolean; // For assistant typing indicator
-isInitialHistoryLoading?: boolean;
-scrollEndRef: RefObject<HTMLDivElement>;
+  messages: Message[];
+  isLoading: boolean; // This prop is now only for isInitialHistoryLoading visual cues if any, or can be removed if not used elsewhere
+  isInitialHistoryLoading?: boolean;
+  scrollEndRef: RefObject<HTMLDivElement>;
 }
 
 export function MessageList({
-messages,
-isLoading,
-isInitialHistoryLoading = false,
-scrollEndRef,
+  messages,
+  // isLoading, // This prop is no longer used for the assistant typing indicator here
+  isInitialHistoryLoading = false, // Keep if used for other purposes
+  scrollEndRef,
 }: MessageListProps) {
-return (
+  return (
     <div className="p-4 space-y-4"> {/* Ensure this padding is desired, or remove if MessageItem handles it */}
-    {messages.map((msg) => (
+      {messages.map((msg) => (
         <MessageItem key={msg.id} message={msg} />
-    ))}
-    {isLoading && messages.length > 0 && messages[messages.length - 1]?.role === 'user' && (
-        <div className="flex justify-start mb-4"> {/* Assistant typing indicator */}
-        <div className="max-w-[70%] p-3 rounded-lg shadow bg-muted">
-            <div className="flex items-center space-x-2">
-            <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse"></div>
-            <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse delay-75"></div>
-            <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse delay-150"></div>
-            </div>
-        </div>
-        </div>
-    )}
-    <div ref={scrollEndRef} style={{ height: '1px' }} />
+      ))}
+      
+      <div ref={scrollEndRef} style={{ height: '1px' }} />
     </div>
-);
+  );
 }--- app/components/chat/InitialPrompts.tsx ---
 interface InitialPromptsProps {
   onPromptSelect: (prompt: string) => void;
@@ -1674,16 +1630,16 @@ export function InitialPrompts({ onPromptSelect }: InitialPromptsProps) {
     </div>
   );
 }--- app/components/chat/MessageItem.tsx ---
-import React from 'react';  
-import { Markdown } from '../Markdown';  
-import { Copy } from 'lucide-react'; // You still use this for the copy button  
-import { SiBoat } from 'react-icons/si';  
+// MessageItem.tsx  
+import React, { useState } from "react";  
+import { Markdown } from "../Markdown";  
+import { Check, Copy } from "lucide-react"; // Import Copy Icon  
   
-// Message interface  
 export interface Message {  
   id: string;  
-  role: 'user' | 'assistant';  
+  role: "user" | "assistant";  
   content: string;  
+  isLoading?: boolean;  
 }  
   
 interface MessageItemProps {  
@@ -1691,422 +1647,617 @@ interface MessageItemProps {
 }  
   
 export function MessageItem({ message }: MessageItemProps) {  
-  const isUser = message.role === 'user';  
+  const isUser = message.role === "user";  
   const messageRef = React.useRef<HTMLDivElement>(null);  
-  
-  const handleCopy = () => {  
-    if (messageRef.current) {  
-      const textToCopy = messageRef.current.innerText;  
-      navigator.clipboard.writeText(textToCopy);  
-      // Add toast notification here if needed  
-    }  
-  };  
+    const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    if (messageRef.current) {
+      const textToCopy = message.content || "";
+      navigator.clipboard.writeText(textToCopy)
+        .then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+    }
+  }; 
   
   return (  
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>  
-      <div className={`max-w-[100%] md:max-w-[100%] flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>  
-        {/* Header - only for assistant */}  
-        {!isUser && (  
-          <div className="flex items-center mb-1 px-3">  
-            <div className="w-9 h-9 rounded-full bg-white flex items-center justify-center mr-2">  
-              <SiBoat color="#7c3aed" className="text-2xl" />  
-            </div>  
-            <span className="font-semibold text-sm text-violet-600">AI</span>  
-          </div>  
-        )}  
-  
-        {/* Message content */}  
-        <div  
-          ref={messageRef}  
-          className={  
-            isUser  
-              ? `px-3 py-2 rounded-lg shadow bg-primary text-primary-foreground   
-                  prose prose-sm md:prose-base dark:prose-invert break-words prose-primary-invert`  
-              : `px-3 py-2   
-                  prose prose-sm md:prose-base dark:prose-invert break-words text-foreground`  
-          }  
+  <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-4`}>  
+    <div  
+      className={`max-w-[100%] flex flex-col ${isUser ? "items-end" : "items-start"}`}  
+    >  
+      {/* Message Content */}  
+      <div  
+        ref={messageRef}  
+        className={`shadow rounded-lg p-3 ${  
+          isUser  
+            ? "bg-primary text-primary-foreground"  
+            : "prose prose-sm text-foreground"  
+        }`}  
+        style={{  
+          maxWidth: "100%",  
+          overflowWrap: "break-word",  
+          overflowX: "auto",  
+        }}  
+      >  
+        {(message.content || !message.isLoading) && <Markdown>{message.content}</Markdown>}  
+      </div>  
+      {/* Copy Button */}  
+      <div className={`flex mt-1 ${isUser ? "justify-end" : "justify-start"}`}>  
+        <button  
+          onClick={handleCopy}  
+          className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted flex items-center gap-1"  
+          aria-label={copied ? "Copied!" : "Copy message"}  
         >  
-          <Markdown>{message.content}</Markdown>  
-        </div>  
-  
-        {/* Action buttons row - properly aligned with message width */}  
-        <div  
-          className={`flex mt-1 space-x-2 ${isUser ? 'justify-end' : 'justify-start'}`}  
-          style={{ width: 'fit-content' }}  
-        >  
-          <button  
-            onClick={handleCopy}  
-            className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted"  
-            aria-label="Copy message"  
-          >  
-            <Copy className="w-4 h-4" />  
-          </button>  
-          {/* Add more action buttons here later */}  
-        </div>  
+          {copied ? (  
+            <>  
+              <Check className="w-4 h-4" />  
+              <span className="text-xs">Copied!</span>  
+            </>  
+          ) : (  
+            <>  
+              <Copy className="w-4 h-4" />  
+              <span className="text-xs">Copy</span>  
+            </>  
+          )}  
+        </button>  
       </div>  
     </div>  
-  );  
-}  --- app/components/chat/ChatPageLayout.tsx ---
-// app/components/chat/ChatPageLayout.tsx
-
-import { useState, useEffect, useCallback, useRef, useTransition as useReactTransitionHook } from 'react';
-import { useNavigate, useLocation, useNavigation } from '@remix-run/react';
-import type { Message } from './MessageItem';
-import { MessageList } from './MessageList';
-import { ChatInputBar } from './ChatInputBar';
-import { InitialPrompts } from './InitialPrompts';
-import {
-  AImodels,
-  defaultModelConfig,
-  defaultSystemPrompt,
-  API_STREAM_URL,
-} from '~/lib/ai-models';
+  </div>  
+);  }--- app/components/chat/streaming-chat-context.tsx ---
+// app/components/chat/streaming-chat-context.tsx
+import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
+import type { Message } from '~/components/chat/MessageItem';
 import type { AIModelConfig } from '~/lib/ai-models';
-import { FourSquare } from 'react-loading-indicators';
-// import { ChevronDown } from 'lucide-react'; // SVG is used directly
-import { useScrollToBottom } from '~/hooks/useScrollToBottom';
-import { FiArrowDown } from 'react-icons/fi';
+import { API_STREAM_URL, defaultSystemPrompt } from '~/lib/ai-models';
 
-type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';
-
-interface ChatPageLayoutProps {
-  initialChatId: string | null;
-  initialMessages?: Message[];
+interface StreamData {
+  chatId?: string; // Backend might still send this, but we won't use it for session ID determination
+  content?: string;
+  type?: 'metadata' | 'content_start' | 'stream_end' | 'error' | 'usage_summary' | 'chat_id_update';
+  error?: { message: string };
 }
 
-export function ChatPageLayout({
-  initialChatId,
-  initialMessages = [],
-}: ChatPageLayoutProps) {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const remixNavigation = useNavigation();
-  const [isReactTransitionPending, startReactTransition] = useReactTransitionHook();
+export interface StreamingChatContextType {
+  messages: Message[];
+  isStreaming: boolean;
+  streamError: string | null;
+  activeStreamChatId: string | null; // ChatId of the stream being processed
+  currentUIFocusChatId: string | null; // ChatId the UI is currently focused on
+  startStream: (
+    prompt: string,
+    modelConfig: AIModelConfig,
+    chatIdToStream: string, // Authoritative Chat ID for this stream
+  ) => Promise<void>; // No longer returns a chatId, as frontend dictates it
+  abortStream: (reason?: string) => void;
+  setMessagesForContext: (messages: Message[], uiFocusedChatId: string | null) => void;
+  clearStreamState: () => void;
+}
 
+const StreamingChatContext = createContext<StreamingChatContextType | undefined>(undefined);
+
+export const StreamingChatProvider = ({ children }: { children: React.ReactNode }) => {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<AIModelConfig>(defaultModelConfig);
-  const [chatPhase, setChatPhase] = useState<ChatLoadingPhase>('READY');
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const [activeStreamChatId, setActiveStreamChatId] = useState<string | null>(null);
+  const [currentUIFocusChatId, setCurrentUIFocusChatId] = useState<string | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
-  const messagesRef = useRef(messages);
-  const activeChatContextIdRef = useRef<string | null | symbol>(Symbol('initial_unprocessed_ref_state'));
+  const currentAssistantMessageIdRef = useRef<string | null>(null);
 
-  const {
-    containerRef,
-    endRef,
-    showScrollDownButton,
-    scrollToBottom,
-  } = useScrollToBottom();
+  const setMessagesForContext = useCallback((newMessages: Message[], uiFocusedChatId: string | null) => {
+    console.log(`Context: setMessagesForContext called. New messages count: ${newMessages.length}, UI Focus: ${uiFocusedChatId}, Current Active Stream: ${activeStreamChatId}`);
+    setMessages(newMessages);
+    setCurrentUIFocusChatId(uiFocusedChatId);
 
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
-
-  // ... (rest of your useEffects and handler functions remain the same) ...
-  // handleSendMessage, handleStreamData, handleStreamError, etc.
-
-  useEffect(() => {
-    const newContextTargetId = initialChatId;
-    const navState = location.state as { fromNewChatFlow?: boolean; initialMessages?: Message[] } | null;
-    let shouldScrollOnLoad = false;
-
-    if (
-      navState?.fromNewChatFlow &&
-      navState.initialMessages &&
-      initialChatId &&
-      initialChatId === activeChatContextIdRef.current
-    ) {
-      setMessages(navState.initialMessages);
-      setChatPhase('READY');
-      shouldScrollOnLoad = true;
-      startReactTransition(() => {
-        const { state, ...restOfLocation } = location;
-        // @ts-ignore
-        const { fromNewChatFlow, initialMessages: _im, ...newStateWithoutFlow } = state || {};
-        navigate(restOfLocation, {
-          replace: true,
-          state: Object.keys(newStateWithoutFlow).length > 0 ? newStateWithoutFlow : undefined
-        });
-      });
-    } else if (newContextTargetId !== activeChatContextIdRef.current) {
-      activeChatContextIdRef.current = newContextTargetId;
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort("Chat context changed");
-        abortControllerRef.current = null;
-      }
+    if (activeStreamChatId && uiFocusedChatId !== activeStreamChatId && isStreaming) {
+      console.log(`Context: UI focus changed to ${uiFocusedChatId} from active stream ${activeStreamChatId}. Aborting stream.`);
+      abortControllerRef.current?.abort("UI context changed away from active stream");
+      // Reset streaming states, message updates handled by abortStream/finally in startStream
       setIsStreaming(false);
-      setInput('');
-      setMessages([]);
-      if (newContextTargetId) {
-        setChatPhase('INITIALIZING');
-        // Scroll will happen in Effect 3 after PREPARING_CONTENT
-      } else {
-        setMessages(initialMessages || []);
-        setChatPhase('READY');
-        shouldScrollOnLoad = true;
+      // setActiveStreamChatId(null); // Keep activeStreamChatId until a new stream starts or state is cleared
+      if (currentAssistantMessageIdRef.current) {
+        setMessages(prev => prev.map(msg => msg.id === currentAssistantMessageIdRef.current && msg.isLoading ? { ...msg, isLoading: false, content: msg.content || "[Stream context changed]" } : msg));
+        currentAssistantMessageIdRef.current = null;
       }
     }
+  }, [activeStreamChatId, isStreaming]);
 
-    if (shouldScrollOnLoad) {
-      requestAnimationFrame(() => scrollToBottom('auto'));
+  const clearStreamState = useCallback(() => {
+    console.log("Context: clearStreamState called.");
+    if (isStreaming && abortControllerRef.current) {
+      abortControllerRef.current.abort("Clearing stream state");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialChatId, location.state, navigate]); // scrollToBottom is stable
-
-  useEffect(() => {
-    if (
-      chatPhase === 'INITIALIZING' &&
-      initialChatId &&
-      activeChatContextIdRef.current === initialChatId
-    ) {
-      setMessages(initialMessages || []);
-      setChatPhase('PREPARING_CONTENT');
+    setMessages([]);
+    setIsStreaming(false);
+    setStreamError(null);
+    setActiveStreamChatId(null);
+    setCurrentUIFocusChatId(null);
+    currentAssistantMessageIdRef.current = null;
+    if (abortControllerRef.current) {
+      abortControllerRef.current = null;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatPhase, initialMessages, initialChatId]);
+  }, [isStreaming]);
 
-  useEffect(() => {
-    if (
-      chatPhase === 'PREPARING_CONTENT' &&
-      activeChatContextIdRef.current === initialChatId
-    ) {
-      startReactTransition(() => {
-        setChatPhase('READY');
-        requestAnimationFrame(() => scrollToBottom('auto'));
-      });
+  const abortStream = useCallback((reason: string = "User requested abort") => {
+    if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
+      console.log(`Context: Aborting stream. Reason: ${reason}`);
+      abortControllerRef.current.abort(reason);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, chatPhase, initialChatId]); // scrollToBottom is stable
-
-  useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort("Component unmounting");
-        abortControllerRef.current = null;
+    // Ensure state is updated even if abort is called externally / multiple times
+    if (isStreaming) {
+      setIsStreaming(false);
+      if (currentAssistantMessageIdRef.current) {
+        setMessages(prev =>
+          prev.map(msg =>
+            msg.id === currentAssistantMessageIdRef.current && msg.isLoading
+              ? { ...msg, isLoading: false, content: msg.content || `[Stream aborted: ${reason}]` }
+              : msg
+          )
+        );
+        currentAssistantMessageIdRef.current = null;
       }
-    };
-  }, []);
+    }
+    // abortControllerRef.current = null; // Will be reset on next startStream
+  }, [isStreaming]);
 
-  const handleSendMessage = useCallback(
-    async (inputText: string, modelConfig: AIModelConfig) => {
-      if (isStreaming || isReactTransitionPending || chatPhase !== 'READY') return;
-      if (initialChatId && activeChatContextIdRef.current !== initialChatId) return;
+  const startStream = useCallback(
+    async (
+      prompt: string,
+      modelConfig: AIModelConfig,
+      chatIdToStream: string, // Authoritative Chat ID (frontend-generated for new)
+    ): Promise<void> => {
+      if (isStreaming && abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
+        console.warn("Context: Stream already in progress. Aborting previous to start new one.");
+        abortControllerRef.current.abort("New stream started, superceded by new request.");
+      }
 
+      console.log(`Context: startStream called for chatId: ${chatIdToStream}`);
       setIsStreaming(true);
-      const currentInput = input || inputText;
-      setInput('');
-      const newUserMessage: Message = {
-        id: crypto.randomUUID(),
-        role: 'user',
-        content: currentInput.trim(),
-      };
-      setMessages(prev => [...prev, newUserMessage]);
+      setStreamError(null);
+      setActiveStreamChatId(chatIdToStream); // This stream is for this ID
 
-      const assistantMessageId = crypto.randomUUID();
-      setMessages(prev => [
-        ...prev,
-        {
-          id: assistantMessageId,
-          role: 'assistant',
-          content: '',
-          timestamp: Date.now(),
-        }
-      ]);
+      // The user message should already be in `messages` via `setMessagesForContext`
+      // We only add the assistant placeholder here.
+      const assistantMsgId = crypto.randomUUID();
+      currentAssistantMessageIdRef.current = assistantMsgId;
+      const assistantPlaceholder: Message = { id: assistantMsgId, role: 'assistant', content: '', isLoading: true };
 
-      const currentAbortController = new AbortController();
-      abortControllerRef.current = currentAbortController;
-      const chatIdForRequest = initialChatId;
-      let receivedChatIdFromStream: string | null = null;
+      setMessages(prevMessages => [...prevMessages, assistantPlaceholder]);
+
+      abortControllerRef.current = new AbortController();
 
       try {
         const response = await fetch(API_STREAM_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
           body: JSON.stringify({
-            chatId: chatIdForRequest,
-            message: currentInput.trim(),
+            chatId: chatIdToStream, // Send the authoritative chatId
+            message: prompt,
             provider: modelConfig.provider,
             model: modelConfig.model,
             systemPrompt: defaultSystemPrompt,
           }),
-          signal: currentAbortController.signal,
+          signal: abortControllerRef.current.signal,
           credentials: 'include',
         });
 
-        if (currentAbortController.signal.aborted) return;
+        if (abortControllerRef.current.signal.aborted) {
+          console.log("Context: Stream fetch aborted before response fully processed.");
+          // Message update is handled in finally or if abortStream was called directly
+          return;
+        }
+
         if (!response.ok || !response.body) {
           const errorBody = await response.text().catch(() => "Failed to read error body");
-          throw new Error(`API Error ${response.status}: ${errorBody.slice(0, 500)}`);
+          setStreamError(`API Error ${response.status}: ${errorBody}`);
+          setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, isLoading: false, content: `API Error: ${response.status}` } : m));
+          setIsStreaming(false);
+          currentAssistantMessageIdRef.current = null;
+          return;
         }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
 
-        // eslint-disable-next-line no-constant-condition
         while (true) {
           const { done, value } = await reader.read();
-          if (currentAbortController.signal.aborted || done) break;
+          if (abortControllerRef.current?.signal.aborted) {
+            console.log("Context: Stream processing loop aborted by signal.");
+            // Message update is handled by abortStream or finally block.  
+            break;
+          }
+          if (done) {
+            console.log("Context: Stream finished naturally.");
+            break;
+          }
+
           buffer += decoder.decode(value, { stream: true });
           let newlineIndex;
           while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
             const line = buffer.slice(0, newlineIndex).trim();
             buffer = buffer.slice(newlineIndex + 1);
+
             if (line.startsWith("data: ")) {
               const jsonDataString = line.substring(5);
-              if (jsonDataString && !currentAbortController.signal.aborted) {
+              if (jsonDataString && !abortControllerRef.current?.signal.aborted) {
                 try {
-                  const chunk = JSON.parse(jsonDataString);
-                  if (chunk.type === "session_info" && chunk.chatId && !chatIdForRequest) {
-                    receivedChatIdFromStream = chunk.chatId;
+                  const chunk: StreamData = JSON.parse(jsonDataString);
+
+                  // ... your chunk handling logic ...  
+                  if (chunk.type === 'chat_id_update' && chunk.chatId && chunk.chatId !== chatIdToStream) {
+                    console.warn(`Context: Backend sent a chatId ${chunk.chatId} different from frontend's ${chatIdToStream}. Ignoring backend's for session ID.`);
                   }
-                  handleStreamData(chunk, assistantMessageId);
-                } catch (e) {
-                  if (!currentAbortController.signal.aborted) console.error("Error parsing stream data JSON:", e, jsonDataString);
+
+                  if (chunk.content) {
+                    setMessages(prev =>
+                      prev.map(msg =>
+                        msg.id === assistantMsgId
+                          ? { ...msg, content: msg.content + chunk.content, isLoading: true }
+                          : msg
+                      )
+                    );
+                  }
+
+                  if (chunk.type === 'stream_end' || chunk.type === 'usage_summary') {
+                    // Stream ended from backend's perspective  
+                    if (!abortControllerRef.current?.signal.aborted) { // Only if not already handled by an abort  
+                      setMessages(prev => prev.map(msg => msg.id === assistantMsgId ? { ...msg, isLoading: false } : msg));
+                      setIsStreaming(false);
+                      currentAssistantMessageIdRef.current = null;
+                    }
+                  } else if (chunk.error) {
+                    if (!abortControllerRef.current?.signal.aborted) {
+                      setStreamError(chunk.error?.message || "Stream error from backend"); // <-- FIXED  
+                      setMessages(prev => prev.map(m =>
+                        m.id === assistantMsgId
+                          ? { ...m, isLoading: false, content: `${m.content || ""}\n[Error: ${chunk.error?.message ?? "Unknown error"}]` }
+                          : m
+                      ));
+                      setIsStreaming(false);
+                      currentAssistantMessageIdRef.current = null;
+                    }
+                    break; // Break from while loop on backend error  
+                  }
+
+                  // Optional: break out of the while(line) if error type  
+                  if (chunk.type === 'error' || chunk.error) break;
+
+                } catch (e: any) {
+                  if (!abortControllerRef.current?.signal.aborted) {
+                    console.error("Context: Error parsing stream data JSON:", e, jsonDataString);
+                    setStreamError(`Error parsing stream: ${e.message}`);
+                    setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, isLoading: false, content: `${m.content || ""}\n[Error parsing stream data]` } : m));
+                    setIsStreaming(false);
+                    currentAssistantMessageIdRef.current = null;
+                  }
+                  break; // Break from while loop on parsing error  
                 }
               }
             }
           }
         }
 
-        if (!chatIdForRequest && receivedChatIdFromStream) {
-          activeChatContextIdRef.current = receivedChatIdFromStream;
-          startReactTransition(() => {
-            navigate(`/chat/${receivedChatIdFromStream}`, {
-              replace: true,
-              state: { initialMessages: messagesRef.current, fromNewChatFlow: true }
-            });
-          });
-        } else if (!currentAbortController.signal.aborted) {
+        if (!abortControllerRef.current?.signal.aborted && isStreaming) { // Stream ended naturally by `done` or outer break
           setIsStreaming(false);
+          setMessages(prev => prev.map(msg => msg.id === assistantMsgId && msg.isLoading ? { ...msg, isLoading: false } : msg));
+          currentAssistantMessageIdRef.current = null;
         }
+
       } catch (error: any) {
-        if (
-          currentAbortController.signal.aborted ||
-          error.name === 'AbortError'
-        ) {
-          if (
-            !messagesRef.current.find(m => m.id === assistantMessageId)?.content?.includes("[Stream aborted]")
-          ) {
-            setMessages(prev =>
-              prev.map(
-                msg =>
-                  msg.id === assistantMessageId && msg.role === 'assistant'
-                    ? {
-                      ...msg,
-                      content: (msg.content || "") + `\n[Stream aborted]`
-                    }
-                    : msg
-              )
-            );
-          }
+        if (error.name === 'AbortError' || abortControllerRef.current?.signal.aborted) {
+          console.log(`Context: Stream operation was aborted. Message: ${error.message}`);
+          if (isStreaming) setIsStreaming(false);
+          setMessages(prev => prev.map(msg => msg.id === assistantMsgId && msg.isLoading ? { ...msg, isLoading: false, content: msg.content || `[Stream aborted]` } : msg));
         } else {
-          console.error(`[handleSendMessage] Send/Stream error:`, error);
-          handleStreamError(assistantMessageId, error.message || "Failed to get response.");
+          console.error("Context: Send/Stream error:", error);
+          setStreamError(error.message || "An unknown error occurred.");
+          setMessages(prev =>
+            prev.map(msg =>
+              msg.id === assistantMsgId
+                ? { ...msg, content: (msg.content || "") + `\n[Error: ${error.message}]`, isLoading: false }
+                : msg
+            )
+          );
+          if (isStreaming) setIsStreaming(false);
         }
-        if (
-          !receivedChatIdFromStream || error
-        ) {
-          if (
-            !currentAbortController.signal.aborted ||
-            (abortControllerRef.current === currentAbortController || !abortControllerRef.current)
-          ) {
-            setIsStreaming(false);
-          }
+        if (currentAssistantMessageIdRef.current === assistantMsgId) {
+          currentAssistantMessageIdRef.current = null;
         }
       } finally {
-        if (abortControllerRef.current === currentAbortController) {
-          abortControllerRef.current = null;
+        // If stream ended, but not due to abort, and we are still marked as streaming (e.g. loop break), ensure cleanup.
+        // This is a safeguard.
+        if (isStreaming && (!abortControllerRef.current || !abortControllerRef.current.signal.aborted)) {
+          setIsStreaming(false);
+          if (currentAssistantMessageIdRef.current === assistantMsgId) {
+            setMessages(prev => prev.map(msg => msg.id === assistantMsgId && msg.isLoading ? { ...msg, isLoading: false } : msg));
+            currentAssistantMessageIdRef.current = null;
+          }
+        }
+        // The AbortController instance is specific to this call of startStream.
+        // It's fine if abortControllerRef.current is overwritten by a subsequent call.
+      }
+    },
+    [isStreaming, abortStream] // Removed currentUIFocusChatId, as chatIdToStream is authoritative
+  );
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
+        console.log("StreamingChatProvider unmounting, aborting any active non-aborted stream.");
+        abortControllerRef.current.abort("Provider unmounted");
+      }
+      abortControllerRef.current = null;
+    };
+  }, []);
+
+  const contextValue: StreamingChatContextType = {
+    messages,
+    isStreaming,
+    streamError,
+    activeStreamChatId,
+    currentUIFocusChatId,
+    startStream,
+    abortStream,
+    setMessagesForContext,
+    clearStreamState,
+  };
+
+  return <StreamingChatContext.Provider value={contextValue}>{children}</StreamingChatContext.Provider>;
+};
+
+export const useStreamingChat = (): StreamingChatContextType => {
+  const context = useContext(StreamingChatContext);
+  if (!context) {
+    throw new Error('useStreamingChat must be used within a StreamingChatProvider');
+  }
+  return context;
+};--- app/components/chat/ChatPageLayout.tsx ---
+// app/components/chat/ChatPageLayout.tsx
+import { useState, useEffect, useCallback, useRef, useTransition as useReactTransitionHook } from 'react';
+import { useNavigate, useLocation, useNavigation as useRemixNavigation, useParams } from '@remix-run/react';
+import { v4 as uuidv4 } from 'uuid';
+import type { Message } from './MessageItem';
+import { MessageList } from './MessageList';
+import { ChatInputBar } from './ChatInputBar';
+import { InitialPrompts } from './InitialPrompts';
+import { AImodels, defaultModelConfig } from '~/lib/ai-models';
+import type { AIModelConfig } from '~/lib/ai-models';
+import { FourSquare } from 'react-loading-indicators';
+import { useScrollToBottom } from '~/hooks/useScrollToBottom';
+import { FiArrowDown } from 'react-icons/fi';
+import { useStreamingChat } from '~/components/chat/streaming-chat-context';
+
+type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';
+
+interface ChatPageLayoutProps {
+  initialChatIdFromLoader: string | null;
+  initialMessagesProp: Message[];
+}
+
+export function ChatPageLayout({
+  initialChatIdFromLoader,
+  initialMessagesProp,
+}: ChatPageLayoutProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const params = useParams();
+  const urlChatId = params.chatId || null;
+
+  const remixNavigation = useRemixNavigation();
+  const [isReactTransitionPending, startReactTransition] = useReactTransitionHook();
+
+  const streamChat = useStreamingChat();
+
+  const [input, setInput] = useState('');
+  const [selectedModel, setSelectedModel] = useState<AIModelConfig>(defaultModelConfig);
+  const [chatPhase, setChatPhase] = useState<ChatLoadingPhase>('INITIALIZING');
+  // Add a local state to prevent multiple context clears during navigation
+  const [hasInitialized, setHasInitialized] = useState(false);
+
+  const {
+    containerRef,
+    endRef,
+    showScrollDownButton,
+    scrollToBottom,
+  } = useScrollToBottom(streamChat.messages);
+
+  // Effect 1: Core logic to initialize or update chat context
+  useEffect(() => {
+    if (hasInitialized && remixNavigation.state !== 'idle') {
+      // Don't re-initialize during navigation transitions
+      return;
+    }
+
+    const navState = location.state as { fromNewChatFlow?: boolean; initialMessages?: Message[] } | null;
+    console.log(`ChatPageLayout E1: urlChatId=${urlChatId}, initialChatIdFromLoader=${initialChatIdFromLoader}, contextUIFocus=${streamChat.currentUIFocusChatId}, contextActiveStream=${streamChat.activeStreamChatId}, navState=${JSON.stringify(navState)}, initialMessagesPropCt=${initialMessagesProp.length}`);
+
+    setChatPhase('INITIALIZING');
+
+    // Scenario 1: Landed on a specific chat URL (e.g., /chat/:id)
+    if (urlChatId) {
+      let messagesToUse: Message[] = initialMessagesProp;
+      if (streamChat.activeStreamChatId === urlChatId &&
+        streamChat.messages.length > 0 &&
+        initialMessagesProp.length === 0) {
+        console.log(`ChatPageLayout E1: Using existing messages from context (Stream active for this ID, initialProp empty).`);
+        messagesToUse = [...streamChat.messages]; // Use existing context messages
+      }
+      // Special handling for navigation from new chat flow
+      if (navState?.fromNewChatFlow && streamChat.activeStreamChatId === urlChatId) {
+        console.log(`ChatPageLayout E1: Landed on ${urlChatId} from new chat flow. Context is active for this ID. Using context messages.`);
+        messagesToUse = [...streamChat.messages]; // Use existing context (which might have streaming content)
+      } else if (navState?.fromNewChatFlow && navState.initialMessages) {
+        console.log(`ChatPageLayout E1: Landed on ${urlChatId} from new chat flow. Context NOT active for this ID. Using navState messages.`);
+        messagesToUse = navState.initialMessages;
+      } else if (streamChat.currentUIFocusChatId !== urlChatId) {
+        // Only clear and reset if we're switching to a different chat
+        console.log(`ChatPageLayout E1: Switching to chat ${urlChatId}. Previous focus: ${streamChat.currentUIFocusChatId}`);
+        // Don't clear during an active stream
+        if (!streamChat.isStreaming || streamChat.activeStreamChatId !== urlChatId) {
+          streamChat.clearStreamState();
+        }
+      }
+
+      // Always set messages for the current context
+      streamChat.setMessagesForContext(messagesToUse, urlChatId);
+
+      // Clean up navigation state if it was used
+      if (navState?.fromNewChatFlow) {
+        startReactTransition(() => {
+          const { state, ...restOfLocation } = location;
+          const { fromNewChatFlow: _fNCF, initialMessages: _iM, ...newStateWithoutFlow } = (state as any) || {};
+          navigate(restOfLocation, { replace: true, state: Object.keys(newStateWithoutFlow).length > 0 ? newStateWithoutFlow : undefined });
+        });
+      }
+      setChatPhase('PREPARING_CONTENT');
+    }
+    // Scenario 2: On a new chat page (urlChatId is null)
+    else if (!urlChatId) {
+      console.log("ChatPageLayout E1: Initializing for new chat page (urlChatId is null).");
+
+      // Only clear if we're coming from a different chat or if there's stale data
+      if (streamChat.currentUIFocusChatId !== null ||
+        (streamChat.messages.length > 0 && !streamChat.isStreaming)) {
+        console.log("ChatPageLayout E1: Clearing context for new chat page.");
+        streamChat.clearStreamState();
+      } else {
+        console.log("ChatPageLayout E1: Context seems aligned for new/unnamed chat or is pristine. Not clearing.");
+      }
+      setChatPhase('READY');
+    }
+
+    setHasInitialized(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlChatId, initialMessagesProp, location.pathname]);
+
+  // Reset initialization flag when URL changes
+  useEffect(() => {
+    return () => {
+      setHasInitialized(false);
+    };
+  }, [location.pathname]);
+
+  // Effect 2: Handle PREPARING_CONTENT phase
+  useEffect(() => {
+    if (chatPhase === 'PREPARING_CONTENT' && streamChat.currentUIFocusChatId === urlChatId && urlChatId) {
+      console.log(`ChatPageLayout E2: PREPARING_CONTENT for ${urlChatId} -> READY. Scrolling history.`);
+      startReactTransition(() => {
+        setChatPhase('READY');
+        const navState = location.state as { fromNewChatFlow?: boolean } | null;
+        if (!navState?.fromNewChatFlow) { // Only scroll if not just landed from new chat flow
+          requestAnimationFrame(() => scrollToBottom('auto'));
+        }
+      });
+    }
+  }, [chatPhase, urlChatId, streamChat.currentUIFocusChatId, scrollToBottom, location.state, startReactTransition]);
+
+  const handleSendMessage = useCallback(
+    async (inputTextValue: string, modelConfig: AIModelConfig) => {
+      const trimmedInput = inputTextValue.trim();
+      if (!trimmedInput || streamChat.isStreaming || isReactTransitionPending || chatPhase !== 'READY') {
+        console.warn("ChatPageLayout: Send message aborted.", { isStreaming: streamChat.isStreaming, isReactTransitionPending, chatPhase });
+        return;
+      }
+      setInput('');
+
+      const userMessage: Message = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: trimmedInput,
+        timestamp: Date.now()
+      };
+
+      if (!urlChatId) { // Current page is a "new chat" page
+        const newChatId = uuidv4();
+        console.log(`ChatPageLayout: New chat. Generated ID: ${newChatId}. Updating context, navigating, then streaming.`);
+
+        try {
+          // 1. Set context for the new chat ID with ONLY the user message
+          //    This prepares the context before navigation and stream start.
+          streamChat.setMessagesForContext([userMessage], newChatId);
+
+          // 2. Navigate to the new chat's URL
+          const destinationPath = `/chat/${newChatId}`;
+
+          // 3. Start the stream BEFORE navigation completes
+          // This ensures stream initialization isn't disrupted by navigation
+          const streamPromise = streamChat.startStream(trimmedInput, modelConfig, newChatId);
+
+          // 4. Navigate to new chat path
+          startReactTransition(() => {
+            navigate(destinationPath, {
+              replace: true,
+              state: { initialMessages: [userMessage], fromNewChatFlow: true },
+            });
+          });
+
+          // 5. Await stream completion (in the background)
+          await streamPromise;
+        } catch (error) {
+          console.error("Error in new chat flow:", error);
+          // Handle error (could add error state to UI here)
+        }
+      } else { // Current page is an existing chat
+        console.log(`ChatPageLayout: Existing chat ${urlChatId}. Sending message.`);
+        try {
+          // Add user message to existing messages in context
+          streamChat.setMessagesForContext([...streamChat.messages, userMessage], urlChatId);
+          await streamChat.startStream(trimmedInput, modelConfig, urlChatId);
+        } catch (error) {
+          console.error("Error in existing chat flow:", error);
+          // Handle error (could add error state to UI here)
         }
       }
     },
-    [initialChatId, isStreaming, selectedModel, navigate, isReactTransitionPending, chatPhase, startReactTransition, input]
+    [streamChat, urlChatId, isReactTransitionPending, chatPhase, navigate, startReactTransition]
   );
-
-  const handleStreamData = (chunk: any, assistantMessageId: string) => {
-    if (abortControllerRef.current?.signal.aborted && !isStreaming) return; // Check isStreaming too
-    if (chunk.content) {
-      setMessages(prev =>
-        prev.map(
-          msg =>
-            msg.id === assistantMessageId && msg.role === 'assistant'
-              ? { ...msg, content: msg.content + chunk.content }
-              : msg
-        )
-      );
-    } else if (chunk.type === 'usage_summary' || chunk.type === 'stream_end') {
-      if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) setIsStreaming(false);
-    } else if (chunk.error) {
-      handleStreamError(assistantMessageId, chunk.error.message || chunk.error);
-      if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) setIsStreaming(false);
-    }
-  };
-
-  const handleStreamError = (assistantMessageId: string, errorMessage: string) => {
-    setMessages(prev =>
-      prev.map(
-        msg =>
-          msg.id === assistantMessageId &&
-            msg.role === 'assistant' &&
-            !msg.content.includes("[Error:")
-            ? {
-              ...msg,
-              content: (msg.content || "") + `\n[Error: ${errorMessage.slice(0, 100)}...]`
-            }
-            : msg
-      )
-    );
-    if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) setIsStreaming(false);
-  };
 
   const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (input.trim() && chatPhase === 'READY' && !isStreaming && !isReactTransitionPending) {
-      handleSendMessage(input.trim(), selectedModel);
+    if (input.trim() && chatPhase === 'READY' && !streamChat.isStreaming && !isReactTransitionPending) {
+      handleSendMessage(input, selectedModel);
     }
   };
 
   const handlePromptSelect = (promptText: string) => {
-    if (chatPhase === 'READY' && !isStreaming && !isReactTransitionPending) {
-      // setInput(promptText); // Optionally set input field
+    if (chatPhase === 'READY' && !streamChat.isStreaming && !isReactTransitionPending) {
+      setInput(promptText);
       handleSendMessage(promptText, selectedModel);
     }
   };
 
   const isRemixNavigating = remixNavigation.state !== 'idle';
-  const showPageLoader =
-    chatPhase !== 'READY' || isRemixNavigating || isReactTransitionPending;
+  const showPageLoader = chatPhase !== 'READY' || isRemixNavigating || isReactTransitionPending;
+
   const displayInitialPrompts =
-    initialChatId === null &&
-    messages.length === 0 &&
-    !isStreaming &&
+    !urlChatId &&
+    streamChat.messages.length === 0 &&
+    !streamChat.isStreaming &&
     !input &&
     chatPhase === 'READY';
-  const showMessageAreaContent =
-    chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending;
-  const childKey = initialChatId || "new-chat-session";
 
+  const showMessageAreaContent = chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending;
+
+  const childKey = urlChatId || "new-chat-page-active";
 
   return (
     <div className="flex flex-col h-full w-full">
-      {/* CHAT MESSAGE AREA */}
       <div ref={containerRef} className="flex-grow overflow-y-auto overflow-x-hidden relative">
         {showPageLoader && (
           <div className="absolute inset-0 flex flex-col justify-center items-center bg-background/80 backdrop-blur-sm z-20 p-4 text-center">
             <FourSquare color="hsl(var(--primary))" size="medium" />
             <p className="mt-4 text-sm text-foreground">
-              {isRemixNavigating
-                ? "Navigating..."
-                : isReactTransitionPending
-                  ? "Processing..."
-                  : chatPhase === 'INITIALIZING'
-                    ? "Initializing chat..."
-                    : chatPhase === 'PREPARING_CONTENT'
-                      ? "Loading messages..."
+              {isRemixNavigating ? "Navigating..."
+                : isReactTransitionPending ? "Processing..."
+                  : chatPhase === 'INITIALIZING' ? "Initializing chat..."
+                    : chatPhase === 'PREPARING_CONTENT' ? "Loading messages..."
                       : "Loading..."}
             </p>
+            {streamChat.streamError && <p className="mt-2 text-destructive text-xs">Error: {streamChat.streamError}</p>}
           </div>
         )}
         <div
@@ -2116,18 +2267,18 @@ export function ChatPageLayout({
             transition: 'opacity 0.2s ease-in-out',
             minHeight: '100%', display: 'flex', flexDirection: 'column',
           }}
-          className="w-full" // Ensures this div spans the containerRef width
+          className="w-full"
         >
           {displayInitialPrompts ? (
             <div className="max-w-5xl mx-auto w-full h-full flex flex-col justify-center items-center p-4 flex-grow">
               <InitialPrompts onPromptSelect={handlePromptSelect} />
             </div>
           ) : (
-            <div className="max-w-4xl mx-auto w-full flex-grow flex flex-col"> {/* Message content column */}
+            <div className="max-w-4xl mx-auto w-full flex-grow flex flex-col">
               <MessageList
                 key={`ml-${childKey}`}
-                messages={messages}
-                isLoading={isStreaming && chatPhase === 'READY'}
+                messages={streamChat.messages}
+                isLoading={streamChat.isStreaming && streamChat.messages[streamChat.messages.length - 1]?.role === 'assistant' && streamChat.messages[streamChat.messages.length - 1]?.isLoading === true}
                 isInitialHistoryLoading={chatPhase === 'PREPARING_CONTENT'}
                 scrollEndRef={endRef}
               />
@@ -2135,7 +2286,6 @@ export function ChatPageLayout({
           )}
         </div>
 
-        {/* Scroll to bottom button - NEW POSITIONING STRUCTURE */}
         {showScrollDownButton && (
           <div className="sticky bottom-4 w-full flex justify-center pointer-events-none z-30">
             <div className="max-w-4xl w-full flex justify-end pointer-events-auto px-4">
@@ -2151,12 +2301,8 @@ export function ChatPageLayout({
             </div>
           </div>
         )}
-
-
-
       </div>
 
-      {/* INPUT BAR */}
       <div className="flex-shrink-0 bg-background border-t border-border">
         <div className="max-w-4xl mx-auto w-full p-2 md:p-3">
           <ChatInputBar
@@ -2166,7 +2312,7 @@ export function ChatPageLayout({
             onSubmit={handleFormSubmit}
             isLoading={
               chatPhase !== 'READY' ||
-              isStreaming ||
+              streamChat.isStreaming ||
               isRemixNavigating ||
               isReactTransitionPending
             }
@@ -2509,52 +2655,53 @@ export function ChatPageLayout({ initialChatId, initialMessages = [] }: ChatPage
   );
 }--- app/components/sidebar-header.tsx ---
 // components/sidebar-header.tsx  
-"use client";  
-import * as React from "react";  
-import { Plus, type LucideIcon } from "lucide-react";  
-import { Button } from "~/components/ui/button";  
-import { cn } from "~/lib/utils";  
+"use client";
+import * as React from "react";
+import { Plus, type LucideIcon } from "lucide-react";
+import { Button } from "~/components/ui/button";
+import { cn } from "~/lib/utils";
 import { Link } from "@remix-run/react"; // For app logo link
-  
-interface SidebarHeaderProps extends React.HTMLAttributes<HTMLDivElement> {  
-  appName: string;  
-  appIcon: LucideIcon;  
-  onNewChat?: () => void;  
-}  
-  
-export function SidebarHeader({  
-  className,  
-  appName,  
-  appIcon: AppIcon,  
-  onNewChat,  
-}: SidebarHeaderProps) {  
-  return (  
-    <div className={cn("flex flex-col gap-4 p-4", className)}>  
-      <Link to="/" prefetch="intent" className="flex items-center gap-3 focus:outline-none group">  
-        <span className="flex aspect-square size-9 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground transition-colors group-hover:bg-sidebar-primary/90 group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-offset-2  group-focus-visible:ring-offset-sidebar">  
-          <AppIcon className="size-5" />  
-        </span>  
-        <span className="font-semibold text-xl tracking-tight text-sidebar-foreground transition-colors group-hover:text-sidebar-foreground/80">  
-          {appName}  
-        </span>  
-      </Link>  
-      <Button  
+
+interface SidebarHeaderProps extends React.HTMLAttributes<HTMLDivElement> {
+  appName: string;
+  appIcon: LucideIcon;
+  onNewChat?: () => void;
+
+}
+
+export function SidebarHeader({
+  className,
+  appName,
+  appIcon: AppIcon,
+  onNewChat,
+}: SidebarHeaderProps) {
+  return (
+    <div className={cn("flex flex-col gap-4 p-4", className)}>
+      <Link to="/" prefetch="intent" className="flex items-center gap-3 focus:outline-none group">
+        <span className="flex aspect-square size-9 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground transition-colors group-hover:bg-sidebar-primary/90 group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-offset-2  group-focus-visible:ring-offset-sidebar">
+          <AppIcon className="size-5" />
+        </span>
+        <span className="font-semibold text-xl tracking-tight text-sidebar-foreground transition-colors group-hover:text-sidebar-foreground/80">
+          {appName}
+        </span>
+      </Link>
+      <Button
         variant="default" // Ensure this variant uses sidebar-primary colors or adjust
-        size="sm"  
-        className={cn(  
+        size="sm"
+        className={cn(
           "w-full flex items-center justify-start gap-2 py-1.5 px-1", // Reduced padding slightly for "New Chat" for better look if text is short
-          "text-sm font-medium rounded-md transition-colors",  
+          "text-sm font-medium rounded-md transition-colors",
           // Assuming 'default' variant is styled appropriately for primary action in sidebar
           // If not, explicitly set: "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"  
-        )}  
-        onClick={onNewChat}  
-      >  
-        <Plus className="size-4" />  
-        <span>New Chat</span>  
-      </Button>  
-    </div>  
-  );  
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+        )}
+        onClick={onNewChat}
+      >
+        <Plus className="size-4" />
+        <span>New Chat</span>
+      </Button>
+    </div>
+  );
 }--- app/components/app-sidebar.tsx ---
 // components/app-sidebar.tsx
 "use client";
@@ -2602,7 +2749,7 @@ export function AppSidebar({
   const handleNewChat = () => {
     console.log("New Chat clicked");
     // Implement your new chat logic here, e.g., navigate to a new chat route
-    // navigate("/chat/new"); // Example
+    navigate("/"); // This will navigate to the root "/"  
   };
 
   const handleLogout = async () => {
@@ -2610,14 +2757,14 @@ export function AppSidebar({
     // The backend should handle clearing HttpOnly cookies and invalidating the session.
     // After the backend logout, it should redirect the user, perhaps to the login page.
     try {
-        const logoutUrl = getApiUrl("AUTH_LOGOUT");
-        // We expect the backend to handle the redirect after logout.
-        // If it just returns a success/failure, then navigate client-side.
-        window.location.href = logoutUrl; // Simplest way to ensure cookies are handled by browser redirect
+      const logoutUrl = getApiUrl("AUTH_LOGOUT");
+      // We expect the backend to handle the redirect after logout.
+      // If it just returns a success/failure, then navigate client-side.
+      window.location.href = logoutUrl; // Simplest way to ensure cookies are handled by browser redirect
     } catch (error) {
-        console.error("Failed to get logout URL:", error);
-        // Fallback or error handling
-        navigate("/login?error=logout_failed");
+      console.error("Failed to get logout URL:", error);
+      // Fallback or error handling
+      navigate("/login?error=logout_failed");
     }
   };
 
