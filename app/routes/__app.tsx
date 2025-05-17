@@ -1,4 +1,4 @@
-// app/routes/__app.tsx    
+// app/routes/__app.tsx
 import type { LoaderFunctionArgs } from "@remix-run/node";  
 import { json } from "@remix-run/node";  
 import { Outlet, useLoaderData } from "@remix-run/react";  
@@ -7,7 +7,9 @@ import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";
 import { AppSidebar } from "~/components/app-sidebar";  
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";  
 import type { NavItem } from "~/components/sidebar-nav";  
-import { Separator } from "~/components/ui/separator";  
+import { Separator } from "~/components/ui/separator";
+import { StreamingChatProvider } from "~/components/chat/streaming-chat-context";
+// ADD THIS IMPORT
   
 export interface AppLoaderData {  
   user: AuthenticatedUserDetails;  
@@ -17,7 +19,6 @@ export interface AppLoaderData {
   
 export async function loader({ request }: LoaderFunctionArgs) {  
   await requireAuth(request);  
-  // Provide only dummy data, until real user API is available  
   return json<AppLoaderData>({  
     user: {  
       id: "dummy",  
@@ -30,7 +31,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });  
 }  
   
-  
 export default function AppLayout() {  
   const { user, appName, mainNavItems } = useLoaderData<typeof loader>();  
   const sidebarUser = {  
@@ -40,32 +40,36 @@ export default function AppLayout() {
   };  
   
   return (  
-    <SidebarProvider>  
-      <AppSidebar  
-        user={sidebarUser}  
-        appName={appName}  
-        mainNav={mainNavItems}  
-      />  
-      {/* This inset is the "main section" right of the sidebar */}  
-      <SidebarInset>  
-        {/* COLUMN FLEX for main app area */}  
-        <div className="relative flex flex-col h-[100dvh] min-h-0 w-full"> {/* The main column, taking whole viewport height */}  
-          {/* Fixed topbar: stays always at the top inside the app area */}  
-          <header className="sticky top-0 left-0 right-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background">  
-            <div className="flex items-center gap-2 px-4">  
-              <SidebarTrigger className="-ml-1" />  
-              <Separator orientation="vertical" className="mr-2 h-4 bg-border" />  
-            </div>  
-          </header>  
-  
-          {/* Main body below topbar, flexes to fill available height */}  
-          <main className="relative flex-1 min-h-0 w-full flex flex-col">  
-            {/* render whatever the route wants (in your case, ChatPageLayout)  
-                 Make sure ChatPageLayout uses the available height!! */}  
-            <Outlet />  
-          </main>  
-        </div>  
-      </SidebarInset>  
-    </SidebarProvider>  
+    // WRAP THE ENTIRE SIDEBAR PROVIDER (OR JUST THE OUTLET PART IF SIDEBAR IS NOT CHAT RELATED)
+    // WITH STREAMINGCHATPROVIDER. For chat apps, often the whole app structure is relevant.
+    <StreamingChatProvider> 
+      <SidebarProvider>  
+        <AppSidebar  
+          user={sidebarUser}  
+          appName={appName}  
+          mainNav={mainNavItems}  
+        />  
+        <SidebarInset>  
+          <div className="relative flex flex-col h-[100dvh] min-h-0 w-full">  
+            <header  
+              className="  
+                sticky top-0 left-0 right-0 z-30 flex  
+                h-[41px] md:h-[62px]  
+                shrink-0 items-center gap-2 border-b border-border bg-background  
+              "  
+            >  
+              <div className="flex items-center gap-2 px-4">  
+                <SidebarTrigger className="-ml-1" />  
+                <Separator orientation="vertical" className="mr-2 h-4 bg-border" />  
+              </div>  
+            </header>  
+            <main className="relative flex-1 min-h-0 w-full flex flex-col">  
+              {/* Outlet is where your /chat and /chat/:id routes render */}
+              <Outlet /> 
+            </main>  
+          </div>  
+        </SidebarInset>  
+      </SidebarProvider>
+    </StreamingChatProvider> 
   );  
-}  
+}

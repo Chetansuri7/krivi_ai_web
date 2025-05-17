@@ -1,11 +1,12 @@
 // app/hooks/useScrollToBottom.ts
 
 import { useRef, useState, useEffect, useCallback } from 'react';
+import { Message } from '~/components/chat/MessageItem';
 
 const INTERSECTION_THRESHOLD_PX = 30; // MODIFIED: Was 50, now 30
 const USER_SCROLL_DEBOUNCE_MS = 150;
 
-export function useScrollToBottom() {
+export function useScrollToBottom(messages: Message[]) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 

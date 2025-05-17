@@ -280,6 +280,118 @@ export function useIsMobile() {
   }, [])
 
   return !!isMobile
+}--- app/hooks/useScrollToBottom.ts ---
+// app/hooks/useScrollToBottom.ts
+
+import { useRef, useState, useEffect, useCallback } from 'react';
+
+const INTERSECTION_THRESHOLD_PX = 30; // MODIFIED: Was 50, now 30
+const USER_SCROLL_DEBOUNCE_MS = 150;
+
+export function useScrollToBottom() {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const endRef = useRef<HTMLDivElement | null>(null);
+
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showScrollDownButton, setShowScrollDownButton] = useState(false);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const scrollableContainer = containerRef.current;
+    const bottomMarker = endRef.current;
+
+    if (bottomMarker) {
+      bottomMarker.scrollIntoView({ behavior });
+    } else if (scrollableContainer) {
+      scrollableContainer.scrollTo({
+        top: scrollableContainer.scrollHeight,
+        behavior,
+      });
+    }
+    setIsAtBottom(true);
+    setShowScrollDownButton(false);
+  }, []);
+
+  useEffect(() => {
+    const scrollableContainer = containerRef.current;
+    const bottomMarker = endRef.current;
+
+    if (!scrollableContainer || !bottomMarker) {
+      setIsAtBottom(true);
+      setShowScrollDownButton(false);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        const isCurrentlyIntersecting = entry.isIntersecting;
+        setIsAtBottom(isCurrentlyIntersecting);
+        setShowScrollDownButton(!isCurrentlyIntersecting);
+      },
+      {
+        root: scrollableContainer,
+        rootMargin: `0px 0px ${INTERSECTION_THRESHOLD_PX}px 0px`,
+        threshold: 0.01,
+      }
+    );
+    observer.observe(bottomMarker);
+
+    if (
+      scrollableContainer.scrollHeight > scrollableContainer.clientHeight &&
+      scrollableContainer.scrollTop + scrollableContainer.clientHeight < scrollableContainer.scrollHeight - INTERSECTION_THRESHOLD_PX
+    ) {
+      setIsAtBottom(false);
+      setShowScrollDownButton(true);
+    } else {
+      setIsAtBottom(true);
+      setShowScrollDownButton(false);
+    }
+
+    return () => {
+      observer.unobserve(bottomMarker);
+      observer.disconnect();
+    };
+  }, [containerRef, endRef]); // Removed INTERSECTION_THRESHOLD_PX from deps as it's const now
+
+  useEffect(() => {
+    const scrollableContainer = containerRef.current;
+    if (!scrollableContainer) return;
+
+    const handleScroll = () => {
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+
+      scrollTimeoutRef.current = setTimeout(() => {
+        if (scrollableContainer) {
+          const { scrollTop, scrollHeight, clientHeight } = scrollableContainer;
+          const isNearBottom =
+            scrollHeight - scrollTop - clientHeight <
+            INTERSECTION_THRESHOLD_PX + 5; 
+
+          if (!isNearBottom) {
+            if (!showScrollDownButton) setShowScrollDownButton(true);
+            if (isAtBottom) setIsAtBottom(false);
+          } else {
+            if (showScrollDownButton) setShowScrollDownButton(false);
+            if (!isAtBottom) setIsAtBottom(true);
+          }
+        }
+      }, USER_SCROLL_DEBOUNCE_MS);
+    };
+
+    scrollableContainer.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      scrollableContainer.removeEventListener('scroll', handleScroll);
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    };
+  }, [containerRef, showScrollDownButton, isAtBottom]); // Removed INTERSECTION_THRESHOLD_PX from deps
+
+  return {
+    containerRef,
+    endRef,
+    isAtBottom,
+    showScrollDownButton,
+    scrollToBottom,
+  };
 }--- app/root.tsx ---
 import {
   Links,
@@ -328,7 +440,6 @@ export default function App() {
   // This Outlet will render __app.tsx (for protected routes) or login.tsx, etc.
   return <Outlet />;
 }--- app/routes/__app.tsx ---
-// app/routes/__app.tsx    
 import type { LoaderFunctionArgs } from "@remix-run/node";  
 import { json } from "@remix-run/node";  
 import { Outlet, useLoaderData } from "@remix-run/react";  
@@ -360,7 +471,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });  
 }  
   
-  
 export default function AppLayout() {  
   const { user, appName, mainNavItems } = useLoaderData<typeof loader>();  
   const sidebarUser = {  
@@ -379,9 +489,21 @@ export default function AppLayout() {
       {/* This inset is the "main section" right of the sidebar */}  
       <SidebarInset>  
         {/* COLUMN FLEX for main app area */}  
-        <div className="relative flex flex-col h-[100dvh] min-h-0 w-full"> {/* The main column, taking whole viewport height */}  
-          {/* Fixed topbar: stays always at the top inside the app area */}  
-          <header className="sticky top-0 left-0 right-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background">  
+        <div className="relative flex flex-col h-[100dvh] min-h-0 w-full">  
+          {/* The main column, taking whole viewport height */}  
+            
+          {/*   
+            Responsive header height:   
+            - 62px on md+ (desktop+)  
+            - 31px on mobile  
+           */}  
+          <header  
+            className="  
+              sticky top-0 left-0 right-0 z-30 flex  
+              h-[41px] md:h-[62px]  
+              shrink-0 items-center gap-2 border-b border-border bg-background  
+            "  
+          >  
             <div className="flex items-center gap-2 px-4">  
               <SidebarTrigger className="-ml-1" />  
               <Separator orientation="vertical" className="mr-2 h-4 bg-border" />  
@@ -390,8 +512,7 @@ export default function AppLayout() {
   
           {/* Main body below topbar, flexes to fill available height */}  
           <main className="relative flex-1 min-h-0 w-full flex flex-col">  
-            {/* render whatever the route wants (in your case, ChatPageLayout)  
-                 Make sure ChatPageLayout uses the available height!! */}  
+            {/* render whatever the route wants (in your case, ChatPageLayout) */}  
             <Outlet />  
           </main>  
         </div>  
@@ -952,7 +1073,231 @@ export function SidebarNav({ mainNav }: SidebarNavProps) {
       </div>  
     </div>  
   );  
-}  --- app/components/sidebar-account.tsx ---
+}  --- app/components/Markdown.tsx ---
+import React, { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import type { Components, ExtraProps } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import { FiCopy, FiCheck } from "react-icons/fi";
+import "highlight.js/styles/atom-one-dark.css";
+
+import type {
+  Element as ProjectHastElement,
+  ElementContent as ProjectHastElementContent,
+} from "hast";
+
+// Utility to robustly extract text content (for copy)
+const extractText = (nodes?: ProjectHastElementContent[]): string =>
+  !nodes
+    ? ""
+    : nodes
+        .map((node) => {
+          if (node.type === "text") {
+            return node.value || "";
+          }
+          if (node.type === "element" && node.children) {
+            return extractText(node.children as ProjectHastElementContent[]);
+          }
+          return "";
+        })
+        .join("");
+
+// Component Start
+interface MarkdownProps {
+  children: string;
+  className?: string;
+}
+
+// Define the props for the custom code component,
+// matching react-markdown's expected CodeProps structure.
+type CustomCodeRendererProps = React.DetailedHTMLProps<
+  React.HTMLAttributes<HTMLElement>, // Includes className, style, etc.
+  HTMLElement
+> &
+  ExtraProps & { // Includes node?: Element (HAST)
+    inline?: boolean; // Specific to code components
+    // children will be provided by React.FC or as part of props
+  };
+
+const CustomCodeRenderer: React.FC<CustomCodeRendererProps> = ({
+  node,
+  inline,
+  className, // This is the className for syntax highlighting (e.g., "language-js")
+  children,
+  ...props // Other HTML attributes for the <code> element
+}) => {
+  const match = /language-(\w+)/.exec(className || "");
+  let language = match ? match[1] : undefined;
+  if (language === "null" || language === "text" || language === "plaintext") language = undefined;
+
+  const isHeuristicInline =
+    node?.position?.start?.line === node?.position?.end?.line && !language;
+
+  const contentString = React.Children.toArray(children)
+    .map(child => (typeof child === 'string' || typeof child === 'number') ? child.toString() : '')
+    .join('');
+  const isContentSingleLine = !contentString.includes("\n");
+
+  if (inline === true || (inline !== false && (isHeuristicInline || isContentSingleLine))) {
+    return (
+      <code
+        // For inline code, we might want to merge the incoming className (if any from markdown like ```text my-class)
+        // with our styling classes. However, react-markdown usually puts language in className.
+        // For simple inline, the syntax highlighting className might not be relevant.
+        className={`bg-muted/50 text-foreground px-1.5 py-0.5 rounded font-mono text-sm ${className || ""}`}
+        {...props}
+      >
+        {children}
+      </code>
+    );
+  }
+
+  const rawCodeContent =
+    node && node.children
+      ? extractText(node.children as ProjectHastElementContent[])
+      : contentString;
+  const cleanedCodeForCopy = rawCodeContent.trim();
+
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <div className="relative rounded-lg overflow-hidden shadow-sm my-4 border border-border bg-card/50 dark:bg-zinc-900/50">
+      <div className="bg-muted/70 dark:bg-zinc-800/70 text-muted-foreground py-1.5 px-4 font-mono text-xs flex items-center justify-between border-b border-border">
+        {language ? (
+          <span className="uppercase tracking-wider">{language}</span>
+        ) : (
+          <span>code</span>
+        )}
+        <button
+          className="bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded px-2 py-0.5 text-xs transition-colors flex items-center gap-1 border border-transparent hover:border-border"
+          onClick={() => {
+            navigator.clipboard.writeText(cleanedCodeForCopy)
+              .then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }).catch((err) => {
+                console.error("Failed to copy:", err);
+                setCopied(false)
+              });
+          }}
+          type="button"
+          aria-label="Copy code to clipboard"
+        >
+          {copied ? <FiCheck size={14} className="text-green-500" /> : <FiCopy size={14} />}
+        </button>
+      </div>
+      <pre className="p-4 text-sm font-mono text-foreground overflow-x-auto" style={{ margin: 0, backgroundColor: "transparent" }}>
+        {/* The `className` (e.g., "language-js") is passed to the inner <code> for rehype-highlight to work */}
+        {/* `props` contains any other HTML attributes for the <code> element */}
+        <code className={className} {...props}>
+          {children}
+        </code>
+      </pre>
+    </div>
+  );
+};
+
+// Props for custom list item component
+type ListItemComponentProps = React.LiHTMLAttributes<HTMLLIElement> & ExtraProps & {
+  checked?: boolean | null;
+  ordered?: boolean;
+};
+
+const CustomListItemRenderer: React.FC<ListItemComponentProps> = ({
+  children,
+  checked,
+  ordered,
+  ...props
+}) => {
+  if (typeof checked === "boolean") {
+    return (
+      <li
+        className="flex items-start gap-2 my-1.5 ml-0"
+        style={{ listStyle: "none" }}
+        {...props}
+      >
+        <span className="pt-0.5">
+          {checked ? (
+            <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="20" height="20" x="2" y="2" rx="4" fill="currentColor" fillOpacity="0.12"/><path d="M8 12.5l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          ) : (
+            <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="20" height="20" x="2" y="2" rx="4" fill="currentColor" fillOpacity="0.06"/></svg>
+          )}
+        </span>
+        <span className={checked ? "line-through text-muted-foreground" : ""}>
+          {children}
+        </span>
+      </li>
+    );
+  }
+  return (
+    <li
+      className={`ml-6 mb-1.5 ${ordered ? "list-decimal" : "list-disc"}`}
+      {...props}
+    >
+      {children}
+    </li>
+  );
+};
+
+
+const markdownComponents: Components = {
+  p: (props) => (
+    <p className="my-3 leading-relaxed text-base" {...props} />
+  ),
+  code: CustomCodeRenderer, // Assign the explicitly typed component
+  li: CustomListItemRenderer, // Assign the explicitly typed component for consistency
+  h1: (props) => (
+    <h1 className="text-3xl font-bold my-4 pb-2 border-b border-border" {...props} />
+  ),
+  h2: (props) => (
+    <h2 className="text-2xl font-semibold my-3 pb-1 border-b border-border" {...props} />
+  ),
+  h3: (props) => (
+    <h3 className="text-xl font-semibold my-2" {...props} />
+  ),
+  h4: (props) => (
+    <h4 className="text-lg font-semibold my-1.5" {...props} />
+  ),
+  h5: (props) => (
+    <h5 className="text-base font-semibold my-1" {...props} />
+  ),
+  h6: (props) => (
+    <h6 className="text-sm font-semibold my-1 text-muted-foreground" {...props} />
+  ),
+  blockquote: (props) => (
+    <blockquote className="my-3 pl-4 border-l-4 border-primary/50 italic text-muted-foreground bg-muted/20 py-2" {...props} />
+  ),
+  table: (props) => (
+    <div className="my-4 overflow-x-auto border border-border rounded-md">
+      <table className="min-w-full divide-y divide-border" {...props} />
+    </div>
+  ),
+  thead: (props) => <thead className="bg-muted/50 dark:bg-zinc-800/50" {...props} />,
+  tbody: (props) => <tbody className="divide-y divide-border bg-card" {...props} />,
+  tr: (props) => <tr className="hover:bg-muted/30 dark:hover:bg-zinc-700/30 transition-colors" {...props} />,
+  th: (props) => <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider" {...props} />,
+  td: (props) => <td className="px-4 py-2.5 text-sm text-foreground" {...props} />,
+  a: (props) => <a className="text-primary hover:underline" target="_blank" rel="noopener noreferrer" {...props} />,
+  ul: (props) => <ul className="my-3 ml-6 list-disc space-y-1" {...props} />,
+  ol: (props) => <ol className="my-3 ml-6 list-decimal space-y-1" {...props} />,
+  hr: (props) => <hr className="my-4 border-border" {...props} />,
+};
+
+export function Markdown({ children, className }: MarkdownProps) {
+  return (
+    <div className={className}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        components={markdownComponents}
+        skipHtml={false}
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
+}--- app/components/sidebar-account.tsx ---
 // components/sidebar-account.tsx
 "use client";
 
@@ -1132,223 +1477,167 @@ export function ModelSelector({
     </div>
   );
 }--- app/components/chat/ChatInputBar.tsx ---
+// app/components/ChatInputBar.tsx
 import React, { useRef, useEffect } from 'react';
-import { ArrowUp, Paperclip, Settings2, ChevronDown } from 'lucide-react';
-import type { AIModelConfig } from '~/lib/ai-models'; // Ensure this path is correct
-import { isProbablyMobile } from '~/lib/utils'; // Ensure this path is correct
+import { ArrowUp, Paperclip, Settings2, ChevronDown as SelectChevronDown } from 'lucide-react'; // Renamed ChevronDown
+import type { AIModelConfig } from '~/lib/ai-models';
+// Assuming isProbablyMobile exists, if not, you can mock it or remove its usage for this stub
+const isProbablyMobile = () => typeof window !== 'undefined' && window.innerWidth < 768;
+
 
 interface ChatInputBarProps {
-  input: string;
-  onInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
-  onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
-  isLoading: boolean;
-  availableModels: AIModelConfig[];
-  selectedModel: AIModelConfig; // Assuming this is always a valid object (e.g., has a default)
-  onModelChange: (model: AIModelConfig) => void;
+input: string;
+onInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
+onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+isLoading: boolean;
+availableModels: AIModelConfig[];
+selectedModel: AIModelConfig;
+onModelChange: (model: AIModelConfig) => void;
 }
 
 const MIN_TEXTAREA_HEIGHT_REM = 1.625;
-const TEXTAREA_PADDING_Y_PX = 20; // py-2.5 is 10px top + 10px bottom
-const MAX_TEXTAREA_HEIGHT_PX = 144; // From your previous example (max-h-36)
+const TEXTAREA_PADDING_Y_PX = 20;
+const MAX_TEXTAREA_HEIGHT_PX = 144;
 
 export function ChatInputBar({
-  input,
-  onInputChange,
-  onSubmit,
-  isLoading,
-  availableModels,
-  selectedModel,
-  onModelChange,
+input,
+onInputChange,
+onSubmit,
+isLoading,
+availableModels,
+selectedModel,
+onModelChange,
 }: ChatInputBarProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
+useEffect(() => {
     const textarea = textareaRef.current;
     if (textarea) {
-      textarea.style.height = 'auto';
-      const scrollHeight = textarea.scrollHeight;
-      const newHeight = Math.min(scrollHeight, MAX_TEXTAREA_HEIGHT_PX);
-      textarea.style.height = `${newHeight}px`;
+    textarea.style.height = 'auto';
+    const scrollHeight = textarea.scrollHeight;
+    const newHeight = Math.min(scrollHeight, MAX_TEXTAREA_HEIGHT_PX);
+    textarea.style.height = `${newHeight}px`;
     }
-  }, [input]);
+}, [input]);
 
-  const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const mobile = isProbablyMobile();
-    if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey)) {
-      return; // Allow newline
-    }
-    if (mobile && e.key === 'Enter') {
-      return; // On mobile, Enter creates a newline by default
-    }
+    if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey)) return;
+    if (mobile && e.key === 'Enter') return;
     if (e.key === 'Enter' && !mobile) {
-      e.preventDefault();
-      if (!isLoading && (input || '').trim()) {
+    e.preventDefault();
+    if (!isLoading && (input || '').trim()) {
         const form = e.currentTarget.form;
-        if (form) {
-          form.requestSubmit(); // Programmatically submit the form
-        }
-      }
+        if (form) form.requestSubmit();
     }
-  };
+    }
+};
 
-  const handleModelSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+const handleModelSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const modelIdentifier = e.target.value;
     const provider = e.target.options[e.target.selectedIndex].dataset.provider;
     const newSelectedModel = availableModels.find(
-      (m) => m.model === modelIdentifier && m.provider === provider
+    (m) => m.model === modelIdentifier && m.provider === provider
     );
-    if (newSelectedModel) {
-      onModelChange(newSelectedModel);
-    }
-  };
+    if (newSelectedModel) onModelChange(newSelectedModel);
+};
 
-  const isSendDisabled = isLoading || !(input || '').trim();
+const isSendDisabled = isLoading || !(input || '').trim();
 
-  return (
-    // This div is now a simple block element, taking full width of its parent.
-    // It's part of the normal page flow, not fixed.
-    // `flex-shrink-0` ensures it doesn't shrink if content above is large.
+return (
     <div className="w-full flex-shrink-0">
-      <form
+    <form
         onSubmit={onSubmit}
-        // The form itself has the card styling and its own padding.
         className="relative mx-auto flex w-full flex-col rounded-xl bg-card p-2.5 shadow-xl ring-1 ring-border sm:p-3"
-        // max-w-3xl can be applied here if you want the input bar itself to be narrower than ChatPageLayout's max-width
-        // For instance, if ChatPageLayout is max-w-4xl, input bar can be max-w-3xl within it.
-        // style={{ maxWidth: '768px' }} // Equivalent to max-w-3xl, if you want to enforce it here
-      >
+    >
         <textarea
-          ref={textareaRef}
-          value={input || ''}
-          onChange={onInputChange}
-          onKeyDown={handleTextareaKeyDown}
-          placeholder={
-            selectedModel
-              ? `Ask ${selectedModel.displayName}...`
-              : 'Select a model...'
-          }
-          rows={1}
-          className="w-full resize-none overflow-y-auto rounded-lg border-none bg-transparent px-3 py-2.5 text-base text-foreground outline-none placeholder:text-muted-foreground focus:ring-0"
-          style={{
-            minHeight: `calc(${MIN_TEXTAREA_HEIGHT_REM}rem + ${TEXTAREA_PADDING_Y_PX}px)`, // approx 46px
+        ref={textareaRef}
+        value={input || ''}
+        onChange={onInputChange}
+        onKeyDown={handleTextareaKeyDown}
+        placeholder={selectedModel ? `Ask ${selectedModel.displayName}...` : 'Select a model...'}
+        rows={1}
+        className="w-full resize-none overflow-y-auto rounded-lg border-none bg-transparent px-3 py-2.5 text-base text-foreground outline-none placeholder:text-muted-foreground focus:ring-0"
+        style={{
+            minHeight: `calc(${MIN_TEXTAREA_HEIGHT_REM}rem + ${TEXTAREA_PADDING_Y_PX}px)`,
             maxHeight: `${MAX_TEXTAREA_HEIGHT_PX}px`,
-          }}
-          disabled={isLoading}
-          aria-label="Chat message input"
+        }}
+        disabled={isLoading}
+        aria-label="Chat message input"
         />
         <div className="mt-2 flex items-center justify-between">
-          {/* Left controls: Model Selector */}
-          <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5">
             <div className="relative">
-              <select
-                value={selectedModel?.model || ''} // Safely access model, handle if not immediately available
+            <select
+                value={selectedModel?.model || ''}
                 onChange={handleModelSelectChange}
                 disabled={isLoading || !availableModels || availableModels.length === 0}
                 className="appearance-none rounded-lg border border-input bg-background py-1.5 pl-3 pr-7 text-xs font-medium shadow-sm hover:border-primary focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-60"
                 aria-label="Select AI Model"
-              >
-                {(!availableModels || availableModels.length === 0) && (
-                  <option value="">Loading models...</option>
-                )}
+            >
+                {(!availableModels || availableModels.length === 0) && (<option value="">Loading...</option>)}
                 {availableModels.map((m) => (
-                  <option
-                    key={`${m.provider}-${m.model}`}
-                    value={m.model}
-                    data-provider={m.provider}
-                  >
+                <option key={`${m.provider}-${m.model}`} value={m.model} data-provider={m.provider}>
                     {m.displayName}
-                  </option>
+                </option>
                 ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            </select>
+            <SelectChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             </div>
-          </div>
-          {/* Right controls: Action Buttons */}
-          <div className="flex items-center gap-1 sm:gap-1.5">
-            <button
-              type="button"
-              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => alert('Attach file - not implemented')}
-              disabled={true} // Explicitly disable if feature is not ready
-              title="Attach file (coming soon)"
-            >
-              <Paperclip size={18} strokeWidth={2} />
-            </button>
-            <button
-              type="button"
-              className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => alert('Model settings - not implemented')}
-              disabled={true} // Explicitly disable if feature is not ready
-              title="Model options (coming soon)"
-            >
-              <Settings2 size={18} strokeWidth={2} />
-            </button>
-            <button
-              type="submit"
-              className="flex items-center justify-center rounded-lg bg-primary px-3 py-2 text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-              // py-2 is 0.5rem padding. px-3 makes it slightly rectangular.
-              disabled={isSendDisabled}
-              title="Send message"
-            >
-              <ArrowUp size={20} strokeWidth={2.25} />
-            </button>
-          </div>
         </div>
-      </form>
+        <div className="flex items-center gap-1 sm:gap-1.5">
+            <button type="button" className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:opacity-50" disabled={true} title="Attach file (soon)">
+            <Paperclip size={18} strokeWidth={2} />
+            </button>
+            <button type="button" className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:opacity-50" disabled={true} title="Model options (soon)">
+            <Settings2 size={18} strokeWidth={2} />
+            </button>
+            <button type="submit" className="flex items-center justify-center rounded-lg bg-primary px-3 py-2 text-primary-foreground hover:bg-primary/90 disabled:opacity-50" disabled={isSendDisabled} title="Send message">
+            <ArrowUp size={20} strokeWidth={2.25} />
+            </button>
+        </div>
+        </div>
+    </form>
     </div>
-  );
+);
 }--- app/components/chat/MessageList.tsx ---
-// app/components/chat/MessageList.tsx
-import { useEffect, useRef } from 'react';
-import type { Message } from './MessageItem'; // Ensure Message includes createdAt if used
+// app/components/MessageList.tsx
+import type { RefObject } from 'react';
+import type { Message } from './MessageItem'; // Assuming MessageItem exports Message type
 import { MessageItem } from './MessageItem';
 
 interface MessageListProps {
-  messages: Message[];
-  isLoading: boolean;
+messages: Message[];
+isLoading: boolean; // For assistant typing indicator
+isInitialHistoryLoading?: boolean;
+scrollEndRef: RefObject<HTMLDivElement>;
 }
 
-export function MessageList({ messages, isLoading }: MessageListProps) {
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const scrollToBottom = () => {
-    // Small timeout can help ensure DOM is fully updated, especially with streaming
-    setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, 50);
-  };
-
-  useEffect(() => {
-    // Scroll to bottom when new messages are added or loading state changes (e.g., assistant starts typing)
-    // Do not scroll if isLoading is true but the last message is not from the user (i.e., assistant is already typing from previous turn)
-    if (messages.length > 0) {
-        scrollToBottom();
-    }
-  }, [messages, isLoading]);
-
-
-  return (
-    // This div is now just for padding and message spacing.
-    // flex-grow and overflow-y-auto are handled by its parent in ChatPageLayout.
-    <div className="p-4 space-y-4">
-      {messages.map((msg) => (
+export function MessageList({
+messages,
+isLoading,
+isInitialHistoryLoading = false,
+scrollEndRef,
+}: MessageListProps) {
+return (
+    <div className="p-4 space-y-4"> {/* Ensure this padding is desired, or remove if MessageItem handles it */}
+    {messages.map((msg) => (
         <MessageItem key={msg.id} message={msg} />
-      ))}
-      {/* Typing indicator shown when isLoading and the last message was from the user */}
-      {isLoading && messages.length > 0 && messages[messages.length - 1]?.role === 'user' && (
-        <div className="flex justify-start mb-4">
-          <div className="max-w-[70%] p-3 rounded-lg shadow bg-muted">
+    ))}
+    {isLoading && messages.length > 0 && messages[messages.length - 1]?.role === 'user' && (
+        <div className="flex justify-start mb-4"> {/* Assistant typing indicator */}
+        <div className="max-w-[70%] p-3 rounded-lg shadow bg-muted">
             <div className="flex items-center space-x-2">
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse"></div>
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse delay-75"></div>
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse delay-150"></div>
+            <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse"></div>
+            <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse delay-75"></div>
+            <div className="w-2 h-2 bg-gray-500 rounded-full animate-pulse delay-150"></div>
             </div>
-          </div>
         </div>
-      )}
-      <div ref={messagesEndRef} />
+        </div>
+    )}
+    <div ref={scrollEndRef} style={{ height: '1px' }} />
     </div>
-  );
+);
 }--- app/components/chat/InitialPrompts.tsx ---
 interface InitialPromptsProps {
   onPromptSelect: (prompt: string) => void;
@@ -1385,38 +1674,511 @@ export function InitialPrompts({ onPromptSelect }: InitialPromptsProps) {
     </div>
   );
 }--- app/components/chat/MessageItem.tsx ---
-export interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
+import React from 'react';  
+import { Markdown } from '../Markdown';  
+import { Copy } from 'lucide-react'; // You still use this for the copy button  
+import { SiBoat } from 'react-icons/si';  
+  
+// Message interface  
+export interface Message {  
+  id: string;  
+  role: 'user' | 'assistant';  
+  content: string;  
+}  
+  
+interface MessageItemProps {  
+  message: Message;  
+}  
+  
+export function MessageItem({ message }: MessageItemProps) {  
+  const isUser = message.role === 'user';  
+  const messageRef = React.useRef<HTMLDivElement>(null);  
+  
+  const handleCopy = () => {  
+    if (messageRef.current) {  
+      const textToCopy = messageRef.current.innerText;  
+      navigator.clipboard.writeText(textToCopy);  
+      // Add toast notification here if needed  
+    }  
+  };  
+  
+  return (  
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>  
+      <div className={`max-w-[100%] md:max-w-[100%] flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>  
+        {/* Header - only for assistant */}  
+        {!isUser && (  
+          <div className="flex items-center mb-1 px-3">  
+            <div className="w-9 h-9 rounded-full bg-white flex items-center justify-center mr-2">  
+              <SiBoat color="#7c3aed" className="text-2xl" />  
+            </div>  
+            <span className="font-semibold text-sm text-violet-600">AI</span>  
+          </div>  
+        )}  
+  
+        {/* Message content */}  
+        <div  
+          ref={messageRef}  
+          className={  
+            isUser  
+              ? `px-3 py-2 rounded-lg shadow bg-primary text-primary-foreground   
+                  prose prose-sm md:prose-base dark:prose-invert break-words prose-primary-invert`  
+              : `px-3 py-2   
+                  prose prose-sm md:prose-base dark:prose-invert break-words text-foreground`  
+          }  
+        >  
+          <Markdown>{message.content}</Markdown>  
+        </div>  
+  
+        {/* Action buttons row - properly aligned with message width */}  
+        <div  
+          className={`flex mt-1 space-x-2 ${isUser ? 'justify-end' : 'justify-start'}`}  
+          style={{ width: 'fit-content' }}  
+        >  
+          <button  
+            onClick={handleCopy}  
+            className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted"  
+            aria-label="Copy message"  
+          >  
+            <Copy className="w-4 h-4" />  
+          </button>  
+          {/* Add more action buttons here later */}  
+        </div>  
+      </div>  
+    </div>  
+  );  
+}  --- app/components/chat/ChatPageLayout.tsx ---
+// app/components/chat/ChatPageLayout.tsx
+
+import { useState, useEffect, useCallback, useRef, useTransition as useReactTransitionHook } from 'react';
+import { useNavigate, useLocation, useNavigation } from '@remix-run/react';
+import type { Message } from './MessageItem';
+import { MessageList } from './MessageList';
+import { ChatInputBar } from './ChatInputBar';
+import { InitialPrompts } from './InitialPrompts';
+import {
+  AImodels,
+  defaultModelConfig,
+  defaultSystemPrompt,
+  API_STREAM_URL,
+} from '~/lib/ai-models';
+import type { AIModelConfig } from '~/lib/ai-models';
+import { FourSquare } from 'react-loading-indicators';
+// import { ChevronDown } from 'lucide-react'; // SVG is used directly
+import { useScrollToBottom } from '~/hooks/useScrollToBottom';
+import { FiArrowDown } from 'react-icons/fi';
+
+type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';
+
+interface ChatPageLayoutProps {
+  initialChatId: string | null;
+  initialMessages?: Message[];
 }
 
-interface MessageItemProps {
-  message: Message;
-}
+export function ChatPageLayout({
+  initialChatId,
+  initialMessages = [],
+}: ChatPageLayoutProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const remixNavigation = useNavigation();
+  const [isReactTransitionPending, startReactTransition] = useReactTransitionHook();
 
-export function MessageItem({ message }: MessageItemProps) {
-  const isUser = message.role === 'user';
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<AIModelConfig>(defaultModelConfig);
+  const [chatPhase, setChatPhase] = useState<ChatLoadingPhase>('READY');
+
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const messagesRef = useRef(messages);
+  const activeChatContextIdRef = useRef<string | null | symbol>(Symbol('initial_unprocessed_ref_state'));
+
+  const {
+    containerRef,
+    endRef,
+    showScrollDownButton,
+    scrollToBottom,
+  } = useScrollToBottom();
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  // ... (rest of your useEffects and handler functions remain the same) ...
+  // handleSendMessage, handleStreamData, handleStreamError, etc.
+
+  useEffect(() => {
+    const newContextTargetId = initialChatId;
+    const navState = location.state as { fromNewChatFlow?: boolean; initialMessages?: Message[] } | null;
+    let shouldScrollOnLoad = false;
+
+    if (
+      navState?.fromNewChatFlow &&
+      navState.initialMessages &&
+      initialChatId &&
+      initialChatId === activeChatContextIdRef.current
+    ) {
+      setMessages(navState.initialMessages);
+      setChatPhase('READY');
+      shouldScrollOnLoad = true;
+      startReactTransition(() => {
+        const { state, ...restOfLocation } = location;
+        // @ts-ignore
+        const { fromNewChatFlow, initialMessages: _im, ...newStateWithoutFlow } = state || {};
+        navigate(restOfLocation, {
+          replace: true,
+          state: Object.keys(newStateWithoutFlow).length > 0 ? newStateWithoutFlow : undefined
+        });
+      });
+    } else if (newContextTargetId !== activeChatContextIdRef.current) {
+      activeChatContextIdRef.current = newContextTargetId;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort("Chat context changed");
+        abortControllerRef.current = null;
+      }
+      setIsStreaming(false);
+      setInput('');
+      setMessages([]);
+      if (newContextTargetId) {
+        setChatPhase('INITIALIZING');
+        // Scroll will happen in Effect 3 after PREPARING_CONTENT
+      } else {
+        setMessages(initialMessages || []);
+        setChatPhase('READY');
+        shouldScrollOnLoad = true;
+      }
+    }
+
+    if (shouldScrollOnLoad) {
+      requestAnimationFrame(() => scrollToBottom('auto'));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialChatId, location.state, navigate]); // scrollToBottom is stable
+
+  useEffect(() => {
+    if (
+      chatPhase === 'INITIALIZING' &&
+      initialChatId &&
+      activeChatContextIdRef.current === initialChatId
+    ) {
+      setMessages(initialMessages || []);
+      setChatPhase('PREPARING_CONTENT');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatPhase, initialMessages, initialChatId]);
+
+  useEffect(() => {
+    if (
+      chatPhase === 'PREPARING_CONTENT' &&
+      activeChatContextIdRef.current === initialChatId
+    ) {
+      startReactTransition(() => {
+        setChatPhase('READY');
+        requestAnimationFrame(() => scrollToBottom('auto'));
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, chatPhase, initialChatId]); // scrollToBottom is stable
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort("Component unmounting");
+        abortControllerRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleSendMessage = useCallback(
+    async (inputText: string, modelConfig: AIModelConfig) => {
+      if (isStreaming || isReactTransitionPending || chatPhase !== 'READY') return;
+      if (initialChatId && activeChatContextIdRef.current !== initialChatId) return;
+
+      setIsStreaming(true);
+      const currentInput = input || inputText;
+      setInput('');
+      const newUserMessage: Message = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: currentInput.trim(),
+      };
+      setMessages(prev => [...prev, newUserMessage]);
+
+      const assistantMessageId = crypto.randomUUID();
+      setMessages(prev => [
+        ...prev,
+        {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+        }
+      ]);
+
+      const currentAbortController = new AbortController();
+      abortControllerRef.current = currentAbortController;
+      const chatIdForRequest = initialChatId;
+      let receivedChatIdFromStream: string | null = null;
+
+      try {
+        const response = await fetch(API_STREAM_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+          body: JSON.stringify({
+            chatId: chatIdForRequest,
+            message: currentInput.trim(),
+            provider: modelConfig.provider,
+            model: modelConfig.model,
+            systemPrompt: defaultSystemPrompt,
+          }),
+          signal: currentAbortController.signal,
+          credentials: 'include',
+        });
+
+        if (currentAbortController.signal.aborted) return;
+        if (!response.ok || !response.body) {
+          const errorBody = await response.text().catch(() => "Failed to read error body");
+          throw new Error(`API Error ${response.status}: ${errorBody.slice(0, 500)}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const { done, value } = await reader.read();
+          if (currentAbortController.signal.aborted || done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let newlineIndex;
+          while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
+            const line = buffer.slice(0, newlineIndex).trim();
+            buffer = buffer.slice(newlineIndex + 1);
+            if (line.startsWith("data: ")) {
+              const jsonDataString = line.substring(5);
+              if (jsonDataString && !currentAbortController.signal.aborted) {
+                try {
+                  const chunk = JSON.parse(jsonDataString);
+                  if (chunk.type === "session_info" && chunk.chatId && !chatIdForRequest) {
+                    receivedChatIdFromStream = chunk.chatId;
+                  }
+                  handleStreamData(chunk, assistantMessageId);
+                } catch (e) {
+                  if (!currentAbortController.signal.aborted) console.error("Error parsing stream data JSON:", e, jsonDataString);
+                }
+              }
+            }
+          }
+        }
+
+        if (!chatIdForRequest && receivedChatIdFromStream) {
+          activeChatContextIdRef.current = receivedChatIdFromStream;
+          startReactTransition(() => {
+            navigate(`/chat/${receivedChatIdFromStream}`, {
+              replace: true,
+              state: { initialMessages: messagesRef.current, fromNewChatFlow: true }
+            });
+          });
+        } else if (!currentAbortController.signal.aborted) {
+          setIsStreaming(false);
+        }
+      } catch (error: any) {
+        if (
+          currentAbortController.signal.aborted ||
+          error.name === 'AbortError'
+        ) {
+          if (
+            !messagesRef.current.find(m => m.id === assistantMessageId)?.content?.includes("[Stream aborted]")
+          ) {
+            setMessages(prev =>
+              prev.map(
+                msg =>
+                  msg.id === assistantMessageId && msg.role === 'assistant'
+                    ? {
+                      ...msg,
+                      content: (msg.content || "") + `\n[Stream aborted]`
+                    }
+                    : msg
+              )
+            );
+          }
+        } else {
+          console.error(`[handleSendMessage] Send/Stream error:`, error);
+          handleStreamError(assistantMessageId, error.message || "Failed to get response.");
+        }
+        if (
+          !receivedChatIdFromStream || error
+        ) {
+          if (
+            !currentAbortController.signal.aborted ||
+            (abortControllerRef.current === currentAbortController || !abortControllerRef.current)
+          ) {
+            setIsStreaming(false);
+          }
+        }
+      } finally {
+        if (abortControllerRef.current === currentAbortController) {
+          abortControllerRef.current = null;
+        }
+      }
+    },
+    [initialChatId, isStreaming, selectedModel, navigate, isReactTransitionPending, chatPhase, startReactTransition, input]
+  );
+
+  const handleStreamData = (chunk: any, assistantMessageId: string) => {
+    if (abortControllerRef.current?.signal.aborted && !isStreaming) return; // Check isStreaming too
+    if (chunk.content) {
+      setMessages(prev =>
+        prev.map(
+          msg =>
+            msg.id === assistantMessageId && msg.role === 'assistant'
+              ? { ...msg, content: msg.content + chunk.content }
+              : msg
+        )
+      );
+    } else if (chunk.type === 'usage_summary' || chunk.type === 'stream_end') {
+      if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) setIsStreaming(false);
+    } else if (chunk.error) {
+      handleStreamError(assistantMessageId, chunk.error.message || chunk.error);
+      if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) setIsStreaming(false);
+    }
+  };
+
+  const handleStreamError = (assistantMessageId: string, errorMessage: string) => {
+    setMessages(prev =>
+      prev.map(
+        msg =>
+          msg.id === assistantMessageId &&
+            msg.role === 'assistant' &&
+            !msg.content.includes("[Error:")
+            ? {
+              ...msg,
+              content: (msg.content || "") + `\n[Error: ${errorMessage.slice(0, 100)}...]`
+            }
+            : msg
+      )
+    );
+    if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) setIsStreaming(false);
+  };
+
+  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (input.trim() && chatPhase === 'READY' && !isStreaming && !isReactTransitionPending) {
+      handleSendMessage(input.trim(), selectedModel);
+    }
+  };
+
+  const handlePromptSelect = (promptText: string) => {
+    if (chatPhase === 'READY' && !isStreaming && !isReactTransitionPending) {
+      // setInput(promptText); // Optionally set input field
+      handleSendMessage(promptText, selectedModel);
+    }
+  };
+
+  const isRemixNavigating = remixNavigation.state !== 'idle';
+  const showPageLoader =
+    chatPhase !== 'READY' || isRemixNavigating || isReactTransitionPending;
+  const displayInitialPrompts =
+    initialChatId === null &&
+    messages.length === 0 &&
+    !isStreaming &&
+    !input &&
+    chatPhase === 'READY';
+  const showMessageAreaContent =
+    chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending;
+  const childKey = initialChatId || "new-chat-session";
+
+
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
-      <div
-        className={`max-w-[100%] p-3 rounded-lg shadow ${
-          isUser
-            ? 'bg-primary text-primary-foreground'
-            : 'bg-muted'
-        }`}
-      >
-        {/* Basic markdown-like rendering for newlines */}
-        {message.content.split('\n').map((line, index) => (
-          <span key={index}>
-            {line}
-            {index < message.content.split('\n').length - 1 && <br />}
-          </span>
-        ))}
+    <div className="flex flex-col h-full w-full">
+      {/* CHAT MESSAGE AREA */}
+      <div ref={containerRef} className="flex-grow overflow-y-auto overflow-x-hidden relative">
+        {showPageLoader && (
+          <div className="absolute inset-0 flex flex-col justify-center items-center bg-background/80 backdrop-blur-sm z-20 p-4 text-center">
+            <FourSquare color="hsl(var(--primary))" size="medium" />
+            <p className="mt-4 text-sm text-foreground">
+              {isRemixNavigating
+                ? "Navigating..."
+                : isReactTransitionPending
+                  ? "Processing..."
+                  : chatPhase === 'INITIALIZING'
+                    ? "Initializing chat..."
+                    : chatPhase === 'PREPARING_CONTENT'
+                      ? "Loading messages..."
+                      : "Loading..."}
+            </p>
+          </div>
+        )}
+        <div
+          style={{
+            opacity: showMessageAreaContent ? 1 : 0,
+            pointerEvents: showMessageAreaContent ? 'auto' : 'none',
+            transition: 'opacity 0.2s ease-in-out',
+            minHeight: '100%', display: 'flex', flexDirection: 'column',
+          }}
+          className="w-full" // Ensures this div spans the containerRef width
+        >
+          {displayInitialPrompts ? (
+            <div className="max-w-5xl mx-auto w-full h-full flex flex-col justify-center items-center p-4 flex-grow">
+              <InitialPrompts onPromptSelect={handlePromptSelect} />
+            </div>
+          ) : (
+            <div className="max-w-4xl mx-auto w-full flex-grow flex flex-col"> {/* Message content column */}
+              <MessageList
+                key={`ml-${childKey}`}
+                messages={messages}
+                isLoading={isStreaming && chatPhase === 'READY'}
+                isInitialHistoryLoading={chatPhase === 'PREPARING_CONTENT'}
+                scrollEndRef={endRef}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Scroll to bottom button - NEW POSITIONING STRUCTURE */}
+        {showScrollDownButton && (
+          <div className="sticky bottom-4 w-full flex justify-center pointer-events-none z-30">
+            <div className="max-w-4xl w-full flex justify-end pointer-events-auto px-4">
+              <button
+                onClick={() => scrollToBottom('smooth')}
+                className="p-2 bg-card border border-border rounded-full shadow-lg hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background transition-all duration-150 ease-in-out animate-fade-in"
+                aria-label="Scroll to latest messages"
+                title="Scroll to latest messages"
+                style={{ minWidth: 36, minHeight: 36, width: 36, height: 36 }}
+              >
+                <FiArrowDown size={16} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        )}
+
+
+
+      </div>
+
+      {/* INPUT BAR */}
+      <div className="flex-shrink-0 bg-background border-t border-border">
+        <div className="max-w-4xl mx-auto w-full p-2 md:p-3">
+          <ChatInputBar
+            key={`cib-${childKey}`}
+            input={input}
+            onInputChange={e => setInput(e.target.value)}
+            onSubmit={handleFormSubmit}
+            isLoading={
+              chatPhase !== 'READY' ||
+              isStreaming ||
+              isRemixNavigating ||
+              isReactTransitionPending
+            }
+            availableModels={AImodels}
+            selectedModel={selectedModel}
+            onModelChange={setSelectedModel}
+          />
+        </div>
       </div>
     </div>
   );
-}--- app/components/chat/ChatPageLayout.tsx ---
+}--- app/components/chat/ChatPageLayout copy.tsx ---
 // app/components/ChatPageLayout.tsx (or wherever your ChatPageLayout is)
 import { useState, useEffect, useCallback, useRef, useTransition } from 'react';
 // If you want Remix's useTransition, use:
