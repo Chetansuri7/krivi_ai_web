@@ -45,6 +45,9 @@ export function ChatPageLayout({
     endRef,
     showScrollDownButton,
     scrollToBottom,
+    scrollToPartialView,    // <-- add this!  
+    resetManualScrollFlag   // <-- add this!  
+
   } = useScrollToBottom(streamChat.messages);
 
   // Effect 1: Core logic to initialize or update chat context
@@ -154,7 +157,7 @@ export function ChatPageLayout({
         try {
           // Set flag to prevent flickering during the new chat transition
           setIsNewChatTransitioning(true);
-          
+
           // 1. Set context for the new chat ID with ONLY the user message
           // This keeps the message visible during transition
           streamChat.setMessagesForContext([userMessage], newChatId);
@@ -194,6 +197,10 @@ export function ChatPageLayout({
     [streamChat, urlChatId, isReactTransitionPending, chatPhase, navigate, startReactTransition]
   );
 
+  useEffect(() => {  
+  resetManualScrollFlag();  
+}, [urlChatId, resetManualScrollFlag]);  
+
   const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (input.trim() && chatPhase === 'READY' && !streamChat.isStreaming && !isReactTransitionPending) {
@@ -210,8 +217,8 @@ export function ChatPageLayout({
 
   const isRemixNavigating = remixNavigation.state !== 'idle';
   // Modify the content ready check to account for new chat transitions
-  const isContentReady = (chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending) || 
-                         (isNewChatTransitioning && streamChat.messages.length > 0);
+  const isContentReady = (chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending) ||
+    (isNewChatTransitioning && streamChat.messages.length > 0);
 
   const childKey = urlChatId || "new-chat-page-active";
 
@@ -219,7 +226,7 @@ export function ChatPageLayout({
     <div className="flex flex-col h-full w-full">
       <div ref={containerRef} className="flex-grow overflow-y-auto overflow-x-hidden relative">
         {/* No visible loading indicators */}
-        
+
         <div
           style={{
             opacity: isContentReady ? 1 : 0,

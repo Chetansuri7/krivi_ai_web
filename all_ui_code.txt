@@ -207,7 +207,8 @@ export function InitialGreeting() {
   );  
 }  
 ---- app/components/chat/MessageItem.tsx ----
-import React, { useState } from "react";
+// app/components/MessageItem.tsx
+import React, { useState, useRef } from "react";
 import { Markdown } from "../Markdown";
 import { Check, Copy, Loader, MessageCircle } from "lucide-react";
 
@@ -225,12 +226,12 @@ interface MessageItemProps {
 export function MessageItem({ message }: MessageItemProps) {
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
-  const messageRef = React.useRef<HTMLDivElement>(null);
+  const contentBubbleRef = useRef<HTMLDivElement>(null);
 
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    if (messageRef.current) {
+    if (contentBubbleRef.current) {
       const textToCopy = message.content || "";
       navigator.clipboard.writeText(textToCopy).then(() => {
         setCopied(true);
@@ -239,16 +240,13 @@ export function MessageItem({ message }: MessageItemProps) {
     }
   };
 
-  // The avatar row is always rendered for assistant—icon only if not loading, otherwise icon + spinner + text  
   function AssistantIconRow() {
     return (
       <div className="flex items-center gap-3 mb-2 select-none">
-        {/* Avatar */}
         <div className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 shadow text-indigo-700">
           <MessageCircle className="w-6 h-6" />
         </div>
-        {/* Assistant name */}
-        <span className="italic text-base mr-2">Krivi AI</span>          {/* Loader and text (only visible when loading) */}
+        <span className="italic text-base mr-2">Krivi AI</span>
         {message.isLoading ? (
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
             <Loader className="w-5 h-5 animate-spin" />
@@ -259,10 +257,13 @@ export function MessageItem({ message }: MessageItemProps) {
     );
   }
 
-  // "Waiting..." phase, no content yet  
   if (isAssistant && message.isLoading && !message.content) {
     return (
-      <div className="flex justify-start mb-4">
+      <div
+        id={`message-${message.id}`}
+        className="flex justify-start mb-4"
+        data-role={message.role}
+      >
         <div className="flex flex-col items-start max-w-[100%]">
           <AssistantIconRow />
         </div>
@@ -270,20 +271,21 @@ export function MessageItem({ message }: MessageItemProps) {
     );
   }
 
-  // Assistant with (possibly loading/finished) content, or user message  
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-4`}>
+    <div
+      id={`message-${message.id}`}
+      className={`flex ${isUser ? "justify-end" : "justify-start"} mb-4`}
+      data-role={message.role}
+    >
       <div
         className={`max-w-[100%] flex flex-col ${isUser ? "items-end" : "items-start"}`}
       >
         {isAssistant && <AssistantIconRow />}
-
-        {/* Message Content Bubble */}
         <div
-          ref={messageRef}
+          ref={contentBubbleRef}
           className={
             isUser
-              ? "shadow rounded-lg px-3 bg-primary text-primary-foreground"
+              ? "shadow rounded-lg px-3 py-2 bg-primary text-primary-foreground"
               : "prose prose-sm text-foreground p-3"
           }
           style={{
@@ -292,37 +294,33 @@ export function MessageItem({ message }: MessageItemProps) {
             overflowX: "auto",
           }}
         >
-          {message.content && <Markdown>{message.content}</Markdown>}
+          {message.content ? <Markdown>{message.content}</Markdown> : (isUser ? <span> </span> : null)}
         </div>
-
-
-        {/* Copy Button */}
         {message.content && (
           <div className={`flex mt-1 ${isUser ? "justify-end" : "justify-start"}`}>
             <button
               onClick={handleCopy}
-              className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted flex items-center gap-1"
+              className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted flex items-center gap-1 text-xs"
               aria-label={copied ? "Copied!" : "Copy message"}
             >
               {copied ? (
                 <>
-                  <Check className="w-4 h-4" />
-                  <span className="text-xs">Copied!</span>
+                  <Check className="w-3 h-3" />
+                  <span>Copied!</span>
                 </>
               ) : (
                 <>
-                  <Copy className="w-4 h-4" />
-                  <span className="text-xs">Copy</span>
+                  <Copy className="w-3 h-3" />
+                  <span>Copy</span>
                 </>
               )}
             </button>
           </div>
         )}
-
       </div>
     </div>
   );
-}  
+}
 ---- app/components/chat/streaming-chat-context.tsx ----
 // app/components/chat/streaming-chat-context.tsx
 import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
@@ -647,7 +645,6 @@ import { useScrollToBottom } from '~/hooks/useScrollToBottom';
 import { FiArrowDown } from 'react-icons/fi';
 import { useStreamingChat } from '~/components/chat/streaming-chat-context';
 import { InitialGreeting } from './InitialGreeting';
-import { useSidebarChatHistory } from '../sidebar-chat-history-context';
 
 type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';
 
@@ -677,12 +674,15 @@ export function ChatPageLayout({
   const [hasInitialized, setHasInitialized] = useState(false);
   // Add new state to track if we're in the new chat creation flow to prevent flickering
   const [isNewChatTransitioning, setIsNewChatTransitioning] = useState(false);
-  const { refreshChatHistory } = useSidebarChatHistory();
+
   const {
     containerRef,
     endRef,
     showScrollDownButton,
     scrollToBottom,
+    scrollToPartialView,    // <-- add this!  
+    resetManualScrollFlag   // <-- add this!  
+
   } = useScrollToBottom(streamChat.messages);
 
   // Effect 1: Core logic to initialize or update chat context
@@ -738,8 +738,6 @@ export function ChatPageLayout({
       }
       setChatPhase('PREPARING_CONTENT');
     }
-
-
     // Scenario 2: On a new chat page (urlChatId is null)
     else if (!urlChatId) {
       // Only clear if we're coming from a different chat or if there's stale data
@@ -788,13 +786,23 @@ export function ChatPageLayout({
         content: trimmedInput,
       };
 
-      if (!urlChatId) { // New chat  
+      if (!urlChatId) { // Current page is a "new chat" page
         const newChatId = uuidv4();
+
         try {
+          // Set flag to prevent flickering during the new chat transition
           setIsNewChatTransitioning(true);
+
+          // 1. Set context for the new chat ID with ONLY the user message
+          // This keeps the message visible during transition
           streamChat.setMessagesForContext([userMessage], newChatId);
+
+          // 2. Start the stream BEFORE navigation completes
+          // This ensures stream initialization isn't disrupted by navigation
           const streamPromise = streamChat.startStream(trimmedInput, modelConfig, newChatId);
 
+          // 3. Navigate to new chat path with minimal visual transition
+          // Short delay to allow the UI to stabilize with user message
           setTimeout(() => {
             const destinationPath = `/chat/${newChatId}`;
             startReactTransition(() => {
@@ -805,29 +813,28 @@ export function ChatPageLayout({
             });
           }, 50);
 
+          // 4. Await stream completion (in the background)
           await streamPromise;
-          // Refresh sidebar after assistant is finished  
-          refreshChatHistory();
-
         } catch (error) {
           console.error("Error in new chat flow:", error);
-          setIsNewChatTransitioning(false);
+          setIsNewChatTransitioning(false); // Reset flag in case of error
         }
-      } else { // Existing chat  
+      } else { // Current page is an existing chat
         try {
+          // Add user message to existing messages in context
           streamChat.setMessagesForContext([...streamChat.messages, userMessage], urlChatId);
           await streamChat.startStream(trimmedInput, modelConfig, urlChatId);
-
-          // Refresh sidebar after assistant is finished  
-          refreshChatHistory();
-
         } catch (error) {
           console.error("Error in existing chat flow:", error);
         }
       }
     },
-    [streamChat, urlChatId, isReactTransitionPending, chatPhase, navigate, startReactTransition, refreshChatHistory]
+    [streamChat, urlChatId, isReactTransitionPending, chatPhase, navigate, startReactTransition]
   );
+
+  useEffect(() => {  
+  resetManualScrollFlag();  
+}, [urlChatId, resetManualScrollFlag]);  
 
   const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -1255,7 +1262,7 @@ export function ChatPageLayout({ initialChatId, initialMessages = [] }: ChatPage
 }
 ---- app/routes/__app.tsx ----
 // app/routes/__app.tsx
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 
@@ -1287,6 +1294,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     mainNavItems: [],
   });
 }
+
+export const meta: MetaFunction = () => [  
+  { title: "Krivi AI | Ignite & Flow" }  
+];  
 
 export default function AppLayout() {
   const { user, appName, mainNavItems } = useLoaderData<typeof loader>();
@@ -1335,14 +1346,12 @@ export default function AppLayout() {
 ---- app/routes/__app.chat.$chatId.tsx ----
 // app/routes/__app.chat.$chatId.tsx
 import { useLoaderData, useLocation, useParams } from "@remix-run/react";
-import { json, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
 import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
 import type { Message } from "~/components/chat/MessageItem";
 import { API_HISTORY_URL_BASE } from "~/lib/ai-models";
+import { json, LoaderFunctionArgs } from "@remix-run/node";
 
-// ... (meta function and loader remain the same)
-export const meta: MetaFunction = ({ params }) => [{ title: `Chat ${params.chatId ? `- ${params.chatId.substring(0,8)}` : ''} | Krivi AI` }];
 
 interface LoaderData {
   chatId: string;
@@ -1565,7 +1574,8 @@ import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
 import { requireAuth } from "~/lib/auth.server";
 import type { Message } from "~/components/chat/MessageItem";
 
-export const meta: MetaFunction = () => [{ title: "New Chat | Krivi AI" }];
+export const meta: MetaFunction = () => [{ title: "Krivi AI" }];  
+
 
 export async function loader({ request }: LoaderFunctionArgs) {
   await requireAuth(request);
@@ -1619,12 +1629,12 @@ export function useIsMobile() {
   return !!isMobile
 }
 ---- app/hooks/useScrollToBottom.ts ----
-// app/hooks/useScrollToBottom.ts
+// Modified useScrollToBottom.ts hook
 
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { Message } from '~/components/chat/MessageItem';
 
-const INTERSECTION_THRESHOLD_PX = 30; // MODIFIED: Was 50, now 30
+const INTERSECTION_THRESHOLD_PX = 30;
 const USER_SCROLL_DEBOUNCE_MS = 150;
 
 export function useScrollToBottom(messages: Message[]) {
@@ -1634,7 +1644,21 @@ export function useScrollToBottom(messages: Message[]) {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [showScrollDownButton, setShowScrollDownButton] = useState(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const userManuallyScrolled = useRef(false);
+  const lastMessageCount = useRef(0);
 
+  // Function to scroll to specific position
+  const scrollToPosition = useCallback((position: number, behavior: ScrollBehavior = 'smooth') => {
+    const scrollableContainer = containerRef.current;
+    if (scrollableContainer) {
+      scrollableContainer.scrollTo({
+        top: position,
+        behavior,
+      });
+    }
+  }, []);
+
+  // Complete scroll to bottom function (unchanged)
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const scrollableContainer = containerRef.current;
     const bottomMarker = endRef.current;
@@ -1651,6 +1675,92 @@ export function useScrollToBottom(messages: Message[]) {
     setShowScrollDownButton(false);
   }, []);
 
+  // New function for 30/70 scrolling
+  const scrollToPartialView = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const scrollableContainer = containerRef.current;
+    if (!scrollableContainer || userManuallyScrolled.current) return;
+
+    // Calculate the position that shows 30% previous content, 70% new content
+    const containerHeight = scrollableContainer.clientHeight;
+    const scrollHeight = scrollableContainer.scrollHeight;
+    
+    // Position to show 30% of previous content at the top
+    // This means we want to position the scroll so that we're 70% down the way
+    // from (scrollHeight - containerHeight) which is the maximum scroll position
+    const newPosition = Math.max(
+      0,
+      (scrollHeight - containerHeight) * 0.7
+    );
+    
+    scrollToPosition(newPosition, behavior);
+  }, [scrollToPosition]);
+
+  // Track user manual scrolling
+  useEffect(() => {
+    const scrollableContainer = containerRef.current;
+    if (!scrollableContainer) return;
+
+    const handleScroll = () => {
+      // Consider any scroll during active interaction as manual
+      userManuallyScrolled.current = true;
+      
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+
+      scrollTimeoutRef.current = setTimeout(() => {
+        if (scrollableContainer) {
+          const { scrollTop, scrollHeight, clientHeight } = scrollableContainer;
+          const isNearBottom = scrollHeight - scrollTop - clientHeight < INTERSECTION_THRESHOLD_PX + 5;
+
+          if (!isNearBottom) {
+            if (!showScrollDownButton) setShowScrollDownButton(true);
+            if (isAtBottom) setIsAtBottom(false);
+          } else {
+            if (showScrollDownButton) setShowScrollDownButton(false);
+            if (!isAtBottom) setIsAtBottom(true);
+            // Reset manual scroll flag when user scrolls back to bottom
+            userManuallyScrolled.current = false;
+          }
+        }
+      }, USER_SCROLL_DEBOUNCE_MS);
+    };
+
+    scrollableContainer.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      scrollableContainer.removeEventListener('scroll', handleScroll);
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    };
+  }, [isAtBottom, showScrollDownButton]);
+
+  // Handle new messages logic
+  useEffect(() => {
+    // Reset manual scroll flag on first render
+    if (messages.length === 0) {
+      userManuallyScrolled.current = false;
+    }
+    
+    // If new message was added
+    if (messages.length > lastMessageCount.current) {
+      // If this is a user message, apply the partial view scroll
+      const lastMessage = messages[messages.length - 1];
+      
+      // When a new user message is sent, do partial scroll
+      if (lastMessage && lastMessage.role === 'user') {
+        // Short delay to allow DOM to update
+        setTimeout(() => scrollToPartialView(), 50);
+      } 
+      // When receiving AI response and user hasn't manually scrolled
+      else if (lastMessage && lastMessage.role === 'assistant' && !userManuallyScrolled.current) {
+        // If at bottom or was already showing partial view, maintain position
+        if (isAtBottom) {
+          setTimeout(() => scrollToBottom('auto'), 10);
+        }
+      }
+      
+      lastMessageCount.current = messages.length;
+    }
+  }, [messages, isAtBottom, scrollToBottom, scrollToPartialView]);
+
+  // Observer to track if we're at bottom (unchanged)
   useEffect(() => {
     const scrollableContainer = containerRef.current;
     const bottomMarker = endRef.current;
@@ -1690,39 +1800,12 @@ export function useScrollToBottom(messages: Message[]) {
       observer.unobserve(bottomMarker);
       observer.disconnect();
     };
-  }, [containerRef, endRef]); // Removed INTERSECTION_THRESHOLD_PX from deps as it's const now
+  }, [containerRef, endRef]);
 
-  useEffect(() => {
-    const scrollableContainer = containerRef.current;
-    if (!scrollableContainer) return;
-
-    const handleScroll = () => {
-      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-
-      scrollTimeoutRef.current = setTimeout(() => {
-        if (scrollableContainer) {
-          const { scrollTop, scrollHeight, clientHeight } = scrollableContainer;
-          const isNearBottom =
-            scrollHeight - scrollTop - clientHeight <
-            INTERSECTION_THRESHOLD_PX + 5; 
-
-          if (!isNearBottom) {
-            if (!showScrollDownButton) setShowScrollDownButton(true);
-            if (isAtBottom) setIsAtBottom(false);
-          } else {
-            if (showScrollDownButton) setShowScrollDownButton(false);
-            if (!isAtBottom) setIsAtBottom(true);
-          }
-        }
-      }, USER_SCROLL_DEBOUNCE_MS);
-    };
-
-    scrollableContainer.addEventListener('scroll', handleScroll, { passive: true });
-    return () => {
-      scrollableContainer.removeEventListener('scroll', handleScroll);
-      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-    };
-  }, [containerRef, showScrollDownButton, isAtBottom]); // Removed INTERSECTION_THRESHOLD_PX from deps
+  // Reset userManuallyScrolled flag when we navigate to a new chat
+  const resetManualScrollFlag = useCallback(() => {
+    userManuallyScrolled.current = false;
+  }, []);
 
   return {
     containerRef,
@@ -1730,11 +1813,13 @@ export function useScrollToBottom(messages: Message[]) {
     isAtBottom,
     showScrollDownButton,
     scrollToBottom,
+    scrollToPartialView,
+    resetManualScrollFlag
   };
 }
 ---- app/routes/__app.tsx ----
 // app/routes/__app.tsx
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 
@@ -1766,6 +1851,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     mainNavItems: [],
   });
 }
+
+export const meta: MetaFunction = () => [  
+  { title: "Krivi AI | Ignite & Flow" }  
+];  
 
 export default function AppLayout() {
   const { user, appName, mainNavItems } = useLoaderData<typeof loader>();
@@ -1814,14 +1903,12 @@ export default function AppLayout() {
 ---- app/routes/__app.chat.$chatId.tsx ----
 // app/routes/__app.chat.$chatId.tsx
 import { useLoaderData, useLocation, useParams } from "@remix-run/react";
-import { json, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
 import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
 import type { Message } from "~/components/chat/MessageItem";
 import { API_HISTORY_URL_BASE } from "~/lib/ai-models";
+import { json, LoaderFunctionArgs } from "@remix-run/node";
 
-// ... (meta function and loader remain the same)
-export const meta: MetaFunction = ({ params }) => [{ title: `Chat ${params.chatId ? `- ${params.chatId.substring(0,8)}` : ''} | Krivi AI` }];
 
 interface LoaderData {
   chatId: string;
@@ -2044,7 +2131,8 @@ import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
 import { requireAuth } from "~/lib/auth.server";
 import type { Message } from "~/components/chat/MessageItem";
 
-export const meta: MetaFunction = () => [{ title: "New Chat | Krivi AI" }];
+export const meta: MetaFunction = () => [{ title: "Krivi AI" }];  
+
 
 export async function loader({ request }: LoaderFunctionArgs) {
   await requireAuth(request);
