@@ -6,7 +6,7 @@ import { useNavigate, useLocation } from '@remix-run/react';
 import type { Message } from './MessageItem'; // Adjust path if necessary
 import { MessageList } from './MessageList'; // Adjust path if necessary
 import { ChatInputBar } from './ChatInputBar'; // Adjust path if necessary
-import { InitialPrompts } from './InitialPrompts'; // Adjust path if necessary
+import { InitialPrompts } from './InitialGreeting'; // Adjust path if necessary
 import {
   AImodels,
   defaultModelConfig,

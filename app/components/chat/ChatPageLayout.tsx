@@ -5,13 +5,13 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Message } from './MessageItem';
 import { MessageList } from './MessageList';
 import { ChatInputBar } from './ChatInputBar';
-import { InitialPrompts } from './InitialPrompts';
 import { AImodels, defaultModelConfig } from '~/lib/ai-models';
 import type { AIModelConfig } from '~/lib/ai-models';
 import { FourSquare } from 'react-loading-indicators';
 import { useScrollToBottom } from '~/hooks/useScrollToBottom';
 import { FiArrowDown } from 'react-icons/fi';
 import { useStreamingChat } from '~/components/chat/streaming-chat-context';
+import { InitialGreeting } from './InitialGreeting';
 
 type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';
 
@@ -150,7 +150,6 @@ export function ChatPageLayout({
         id: crypto.randomUUID(),
         role: 'user',
         content: trimmedInput,
-        timestamp: Date.now()
       };
 
       if (!urlChatId) { // Current page is a "new chat" page
@@ -215,12 +214,7 @@ export function ChatPageLayout({
   const isRemixNavigating = remixNavigation.state !== 'idle';
   const showPageLoader = chatPhase !== 'READY' || isRemixNavigating || isReactTransitionPending;
 
-  const displayInitialPrompts =
-    !urlChatId &&
-    streamChat.messages.length === 0 &&
-    !streamChat.isStreaming &&
-    !input &&
-    chatPhase === 'READY';
+
 
   const showMessageAreaContent = chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending;
 
@@ -242,30 +236,36 @@ export function ChatPageLayout({
             {streamChat.streamError && <p className="mt-2 text-destructive text-xs">Error: {streamChat.streamError}</p>}
           </div>
         )}
+
+
         <div
           style={{
             opacity: showMessageAreaContent ? 1 : 0,
             pointerEvents: showMessageAreaContent ? 'auto' : 'none',
             transition: 'opacity 0.2s ease-in-out',
-            minHeight: '100%', display: 'flex', flexDirection: 'column',
+            minHeight: '100%',
+            display: 'flex',
+            flexDirection: 'column',
           }}
           className="w-full"
         >
-          {displayInitialPrompts ? (
-            <div className="max-w-5xl mx-auto w-full h-full flex flex-col justify-center items-center p-4 flex-grow">
-              <InitialPrompts onPromptSelect={handlePromptSelect} />
-            </div>
-          ) : (
-            <div className="max-w-4xl mx-auto w-full flex-grow flex flex-col">
+          <div className="max-w-4xl mx-auto w-full flex-grow flex flex-col">
+            {streamChat.messages.length === 0 ? (
+              <InitialGreeting />
+            ) : (
               <MessageList
                 key={`ml-${childKey}`}
                 messages={streamChat.messages}
-                isLoading={streamChat.isStreaming && streamChat.messages[streamChat.messages.length - 1]?.role === 'assistant' && streamChat.messages[streamChat.messages.length - 1]?.isLoading === true}
-                isInitialHistoryLoading={chatPhase === 'PREPARING_CONTENT'}
+                isLoading={
+                  streamChat.isStreaming &&
+                  streamChat.messages[streamChat.messages.length - 1]?.role === "assistant" &&
+                  streamChat.messages[streamChat.messages.length - 1]?.isLoading === true
+                }
+                isInitialHistoryLoading={chatPhase === "PREPARING_CONTENT"}
                 scrollEndRef={endRef}
               />
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {showScrollDownButton && (

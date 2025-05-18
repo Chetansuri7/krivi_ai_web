@@ -189,125 +189,100 @@ export function MessageList({
     </div>
   );
 }
----- app/components/chat/InitialPrompts.tsx ----
-interface InitialPromptsProps {
-  onPromptSelect: (prompt: string) => void;
-}
-
-const suggestions = [
-  "What are the advantages of using Next.js?",
-  "Write code to demonstrate Dijkstra's algorithm",
-  "Help me write an essay about Silicon Valley",
-  "What is the weather in San Francisco?",
-];
-
-export function InitialPrompts({ onPromptSelect }: InitialPromptsProps) {
-  return (
-    <div className="flex flex-col items-center justify-center h-full p-4">
-      <h1 className="text-3xl font-semibold mb-2">Hello there!</h1>
-      <p className="text-muted-foreground mb-8">How can I help you today?</p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-xl">
-        {suggestions.map((prompt) => (
-          <button
-            key={prompt}
-            onClick={() => onPromptSelect(prompt)}
-            className="p-4 border rounded-lg hover:bg-muted text-left text-sm" // Basic styling
-          >
-            <p className="font-medium">{prompt.split(' ').slice(0, 5).join(' ')}{prompt.split(' ').length > 5 ? '...' : ''}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {prompt.startsWith("Write code") ? "Code generation" : 
-               prompt.startsWith("Help me write") ? "Writing assistance" : 
-               "General query"}
-            </p>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
+---- app/components/chat/InitialGreeting.tsx ----
+// app/components/chat/InitialGreeting.tsx  
+import React from "react";  
+  
+export function InitialGreeting() {  
+  return (  
+<div className="flex flex-1 flex-col justify-center items-center min-h-0">  
+      <h1 className="text-3xl md:text-4xl font-semibold mb-2 text-neutral-900 dark:text-neutral-100 text-center">  
+        How can I help you today?  
+      </h1>  
+      <div className="h-1 w-24 bg-primary/40 rounded-full my-4" />  
+      <p className="text-neutral-500 dark:text-neutral-400 text-center">  
+        Start typing below or ask anything.  
+      </p>  
+    </div>  
+  );  
+}  
 ---- app/components/chat/MessageItem.tsx ----
-// app/components/chat/MessageItem.tsx
-import React from 'react';
-import { Markdown } from '../Markdown';
-import { Copy, Loader2 } from 'lucide-react'; // Import Loader2
-import { SiBoat } from 'react-icons/si';
-
-// Message interface (ensure isLoading is here from previous step)
-export interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  isLoading?: boolean;
-  timestamp?: number; // Keep if you added this previously
-}
-
-interface MessageItemProps {
-  message: Message;
-}
-
-export function MessageItem({ message }: MessageItemProps) {
-  const isUser = message.role === 'user';
-  const messageRef = React.useRef<HTMLDivElement>(null);
+// MessageItem.tsx  
+import React, { useState } from "react";  
+import { Markdown } from "../Markdown";  
+import { Check, Copy } from "lucide-react"; // Import Copy Icon  
+  
+export interface Message {  
+  id: string;  
+  role: "user" | "assistant";  
+  content: string;  
+  isLoading?: boolean;  
+}  
+  
+interface MessageItemProps {  
+  message: Message;  
+}  
+  
+export function MessageItem({ message }: MessageItemProps) {  
+  const isUser = message.role === "user";  
+  const messageRef = React.useRef<HTMLDivElement>(null);  
+    const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
     if (messageRef.current) {
-      const textToCopy = messageRef.current.innerText;
-      navigator.clipboard.writeText(textToCopy);
-      // Add toast notification here if needed
+      const textToCopy = message.content || "";
+      navigator.clipboard.writeText(textToCopy)
+        .then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
     }
-  };
-
-  return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
-      <div className={`max-w-[100%] md:max-w-[100%] flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
-        {/* Header - only for assistant */}
-        {!isUser && (
-          <div className="flex items-center mb-1 px-3">
-            <div className="w-9 h-9 rounded-full bg-white flex items-center justify-center mr-2">
-              <SiBoat color="#7c3aed" className="text-2xl" />
-            </div>
-            <span className="font-semibold text-sm text-violet-600">AI</span>
-            {/* START: Updated loading indicator */}
-            {message.isLoading && (
-              <div className="ml-2 flex items-center justify-center">
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              </div>
-            )}
-            {/* END: Updated loading indicator */}
-          </div>
-        )}
-
-        {/* Message content */}
-        <div
-          ref={messageRef}
-          className={
-            isUser
-              ? `px-3 py-2 rounded-lg shadow bg-primary text-primary-foreground
-                  prose prose-sm md:prose-base dark:prose-invert break-words prose-primary-invert`
-              : `px-3 py-2
-                  prose prose-sm md:prose-base dark:prose-invert break-words text-foreground`
-          }
-        >
-          {(message.content || !message.isLoading) && <Markdown>{message.content}</Markdown>}
-        </div>
-
-        {/* Action buttons row - properly aligned with message width */}
-        <div
-          className={`flex mt-1 space-x-2 ${isUser ? 'justify-end' : 'justify-start'}`}
-          style={{ width: 'fit-content' }}
-        >
-          <button
-            onClick={handleCopy}
-            className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted"
-            aria-label="Copy message"
-          >
-            <Copy className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+  }; 
+  
+  return (  
+  <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-4`}>  
+    <div  
+      className={`max-w-[100%] flex flex-col ${isUser ? "items-end" : "items-start"}`}  
+    >  
+      {/* Message Content */}  
+      <div  
+        ref={messageRef}  
+        className={`shadow rounded-lg p-3 ${  
+          isUser  
+            ? "bg-primary text-primary-foreground"  
+            : "prose prose-sm text-foreground"  
+        }`}  
+        style={{  
+          maxWidth: "100%",  
+          overflowWrap: "break-word",  
+          overflowX: "auto",  
+        }}  
+      >  
+        {(message.content || !message.isLoading) && <Markdown>{message.content}</Markdown>}  
+      </div>  
+      {/* Copy Button */}  
+      <div className={`flex mt-1 ${isUser ? "justify-end" : "justify-start"}`}>  
+        <button  
+          onClick={handleCopy}  
+          className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted flex items-center gap-1"  
+          aria-label={copied ? "Copied!" : "Copy message"}  
+        >  
+          {copied ? (  
+            <>  
+              <Check className="w-4 h-4" />  
+              <span className="text-xs">Copied!</span>  
+            </>  
+          ) : (  
+            <>  
+              <Copy className="w-4 h-4" />  
+              <span className="text-xs">Copy</span>  
+            </>  
+          )}  
+        </button>  
+      </div>  
+    </div>  
+  </div>  
+);  }
 ---- app/components/chat/streaming-chat-context.tsx ----
 // app/components/chat/streaming-chat-context.tsx
 import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
@@ -627,13 +602,13 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Message } from './MessageItem';
 import { MessageList } from './MessageList';
 import { ChatInputBar } from './ChatInputBar';
-import { InitialPrompts } from './InitialPrompts';
 import { AImodels, defaultModelConfig } from '~/lib/ai-models';
 import type { AIModelConfig } from '~/lib/ai-models';
 import { FourSquare } from 'react-loading-indicators';
 import { useScrollToBottom } from '~/hooks/useScrollToBottom';
 import { FiArrowDown } from 'react-icons/fi';
 import { useStreamingChat } from '~/components/chat/streaming-chat-context';
+import { InitialGreeting } from './InitialGreeting';
 
 type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';
 
@@ -837,12 +812,7 @@ export function ChatPageLayout({
   const isRemixNavigating = remixNavigation.state !== 'idle';
   const showPageLoader = chatPhase !== 'READY' || isRemixNavigating || isReactTransitionPending;
 
-  const displayInitialPrompts =
-    !urlChatId &&
-    streamChat.messages.length === 0 &&
-    !streamChat.isStreaming &&
-    !input &&
-    chatPhase === 'READY';
+
 
   const showMessageAreaContent = chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending;
 
@@ -864,30 +834,36 @@ export function ChatPageLayout({
             {streamChat.streamError && <p className="mt-2 text-destructive text-xs">Error: {streamChat.streamError}</p>}
           </div>
         )}
+
+
         <div
           style={{
             opacity: showMessageAreaContent ? 1 : 0,
             pointerEvents: showMessageAreaContent ? 'auto' : 'none',
             transition: 'opacity 0.2s ease-in-out',
-            minHeight: '100%', display: 'flex', flexDirection: 'column',
+            minHeight: '100%',
+            display: 'flex',
+            flexDirection: 'column',
           }}
           className="w-full"
         >
-          {displayInitialPrompts ? (
-            <div className="max-w-5xl mx-auto w-full h-full flex flex-col justify-center items-center p-4 flex-grow">
-              <InitialPrompts onPromptSelect={handlePromptSelect} />
-            </div>
-          ) : (
-            <div className="max-w-4xl mx-auto w-full flex-grow flex flex-col">
+          <div className="max-w-4xl mx-auto w-full flex-grow flex flex-col">
+            {streamChat.messages.length === 0 ? (
+              <InitialGreeting />
+            ) : (
               <MessageList
                 key={`ml-${childKey}`}
                 messages={streamChat.messages}
-                isLoading={streamChat.isStreaming && streamChat.messages[streamChat.messages.length - 1]?.role === 'assistant' && streamChat.messages[streamChat.messages.length - 1]?.isLoading === true}
-                isInitialHistoryLoading={chatPhase === 'PREPARING_CONTENT'}
+                isLoading={
+                  streamChat.isStreaming &&
+                  streamChat.messages[streamChat.messages.length - 1]?.role === "assistant" &&
+                  streamChat.messages[streamChat.messages.length - 1]?.isLoading === true
+                }
+                isInitialHistoryLoading={chatPhase === "PREPARING_CONTENT"}
                 scrollEndRef={endRef}
               />
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {showScrollDownButton && (
@@ -938,7 +914,7 @@ import { useNavigate, useLocation } from '@remix-run/react';
 import type { Message } from './MessageItem'; // Adjust path if necessary
 import { MessageList } from './MessageList'; // Adjust path if necessary
 import { ChatInputBar } from './ChatInputBar'; // Adjust path if necessary
-import { InitialPrompts } from './InitialPrompts'; // Adjust path if necessary
+import { InitialPrompts } from './InitialGreeting'; // Adjust path if necessary
 import {
   AImodels,
   defaultModelConfig,
