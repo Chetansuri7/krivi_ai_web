@@ -5,7 +5,8 @@ import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
 import { requireAuth } from "~/lib/auth.server";
 import type { Message } from "~/components/chat/MessageItem";
 
-export const meta: MetaFunction = () => [{ title: "New Chat | Krivi AI" }];
+export const meta: MetaFunction = () => [{ title: "Krivi AI" }];  
+
 
 export async function loader({ request }: LoaderFunctionArgs) {
   await requireAuth(request);

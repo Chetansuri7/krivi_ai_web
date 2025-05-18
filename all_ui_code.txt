@@ -207,82 +207,122 @@ export function InitialGreeting() {
   );  
 }  
 ---- app/components/chat/MessageItem.tsx ----
-// MessageItem.tsx  
-import React, { useState } from "react";  
-import { Markdown } from "../Markdown";  
-import { Check, Copy } from "lucide-react"; // Import Copy Icon  
-  
-export interface Message {  
-  id: string;  
-  role: "user" | "assistant";  
-  content: string;  
-  isLoading?: boolean;  
-}  
-  
-interface MessageItemProps {  
-  message: Message;  
-}  
-  
-export function MessageItem({ message }: MessageItemProps) {  
-  const isUser = message.role === "user";  
-  const messageRef = React.useRef<HTMLDivElement>(null);  
-    const [copied, setCopied] = useState(false);
+import React, { useState } from "react";
+import { Markdown } from "../Markdown";
+import { Check, Copy, Loader, MessageCircle } from "lucide-react";
+
+export interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  isLoading?: boolean;
+}
+
+interface MessageItemProps {
+  message: Message;
+}
+
+export function MessageItem({ message }: MessageItemProps) {
+  const isUser = message.role === "user";
+  const isAssistant = message.role === "assistant";
+  const messageRef = React.useRef<HTMLDivElement>(null);
+
+  const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
     if (messageRef.current) {
       const textToCopy = message.content || "";
-      navigator.clipboard.writeText(textToCopy)
-        .then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      });
     }
-  }; 
-  
-  return (  
-  <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-4`}>  
-    <div  
-      className={`max-w-[100%] flex flex-col ${isUser ? "items-end" : "items-start"}`}  
-    >  
-      {/* Message Content */}  
-      <div  
-        ref={messageRef}  
-        className={`shadow rounded-lg p-3 ${  
-          isUser  
-            ? "bg-primary text-primary-foreground"  
-            : "prose prose-sm text-foreground"  
-        }`}  
-        style={{  
-          maxWidth: "100%",  
-          overflowWrap: "break-word",  
-          overflowX: "auto",  
-        }}  
-      >  
-        {(message.content || !message.isLoading) && <Markdown>{message.content}</Markdown>}  
-      </div>  
-      {/* Copy Button */}  
-      <div className={`flex mt-1 ${isUser ? "justify-end" : "justify-start"}`}>  
-        <button  
-          onClick={handleCopy}  
-          className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted flex items-center gap-1"  
-          aria-label={copied ? "Copied!" : "Copy message"}  
-        >  
-          {copied ? (  
-            <>  
-              <Check className="w-4 h-4" />  
-              <span className="text-xs">Copied!</span>  
-            </>  
-          ) : (  
-            <>  
-              <Copy className="w-4 h-4" />  
-              <span className="text-xs">Copy</span>  
-            </>  
-          )}  
-        </button>  
-      </div>  
-    </div>  
-  </div>  
-);  }
+  };
+
+  // The avatar row is always rendered for assistant—icon only if not loading, otherwise icon + spinner + text  
+  function AssistantIconRow() {
+    return (
+      <div className="flex items-center gap-3 mb-2 select-none">
+        {/* Avatar */}
+        <div className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 shadow text-indigo-700">
+          <MessageCircle className="w-6 h-6" />
+        </div>
+        {/* Assistant name */}
+        <span className="italic text-base mr-2">Krivi AI</span>          {/* Loader and text (only visible when loading) */}
+        {message.isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm">
+            <Loader className="w-5 h-5 animate-spin" />
+            <span>Assistant is typing...</span>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  // "Waiting..." phase, no content yet  
+  if (isAssistant && message.isLoading && !message.content) {
+    return (
+      <div className="flex justify-start mb-4">
+        <div className="flex flex-col items-start max-w-[100%]">
+          <AssistantIconRow />
+        </div>
+      </div>
+    );
+  }
+
+  // Assistant with (possibly loading/finished) content, or user message  
+  return (
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-4`}>
+      <div
+        className={`max-w-[100%] flex flex-col ${isUser ? "items-end" : "items-start"}`}
+      >
+        {isAssistant && <AssistantIconRow />}
+
+        {/* Message Content Bubble */}
+        <div
+          ref={messageRef}
+          className={
+            isUser
+              ? "shadow rounded-lg px-3 bg-primary text-primary-foreground"
+              : "prose prose-sm text-foreground p-3"
+          }
+          style={{
+            maxWidth: "100%",
+            overflowWrap: "break-word",
+            overflowX: "auto",
+          }}
+        >
+          {message.content && <Markdown>{message.content}</Markdown>}
+        </div>
+
+
+        {/* Copy Button */}
+        {message.content && (
+          <div className={`flex mt-1 ${isUser ? "justify-end" : "justify-start"}`}>
+            <button
+              onClick={handleCopy}
+              className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted flex items-center gap-1"
+              aria-label={copied ? "Copied!" : "Copy message"}
+            >
+              {copied ? (
+                <>
+                  <Check className="w-4 h-4" />
+                  <span className="text-xs">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-4 h-4" />
+                  <span className="text-xs">Copy</span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}  
 ---- app/components/chat/streaming-chat-context.tsx ----
 // app/components/chat/streaming-chat-context.tsx
 import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
@@ -595,7 +635,6 @@ export const useStreamingChat = (): StreamingChatContextType => {
   return context;
 };
 ---- app/components/chat/ChatPageLayout.tsx ----
-// app/components/chat/ChatPageLayout.tsx
 import { useState, useEffect, useCallback, useRef, useTransition as useReactTransitionHook } from 'react';
 import { useNavigate, useLocation, useNavigation as useRemixNavigation, useParams } from '@remix-run/react';
 import { v4 as uuidv4 } from 'uuid';
@@ -604,11 +643,11 @@ import { MessageList } from './MessageList';
 import { ChatInputBar } from './ChatInputBar';
 import { AImodels, defaultModelConfig } from '~/lib/ai-models';
 import type { AIModelConfig } from '~/lib/ai-models';
-import { FourSquare } from 'react-loading-indicators';
 import { useScrollToBottom } from '~/hooks/useScrollToBottom';
 import { FiArrowDown } from 'react-icons/fi';
 import { useStreamingChat } from '~/components/chat/streaming-chat-context';
 import { InitialGreeting } from './InitialGreeting';
+import { useSidebarChatHistory } from '../sidebar-chat-history-context';
 
 type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';
 
@@ -636,7 +675,9 @@ export function ChatPageLayout({
   const [chatPhase, setChatPhase] = useState<ChatLoadingPhase>('INITIALIZING');
   // Add a local state to prevent multiple context clears during navigation
   const [hasInitialized, setHasInitialized] = useState(false);
-
+  // Add new state to track if we're in the new chat creation flow to prevent flickering
+  const [isNewChatTransitioning, setIsNewChatTransitioning] = useState(false);
+  const { refreshChatHistory } = useSidebarChatHistory();
   const {
     containerRef,
     endRef,
@@ -652,7 +693,12 @@ export function ChatPageLayout({
     }
 
     const navState = location.state as { fromNewChatFlow?: boolean; initialMessages?: Message[] } | null;
-    console.log(`ChatPageLayout E1: urlChatId=${urlChatId}, initialChatIdFromLoader=${initialChatIdFromLoader}, contextUIFocus=${streamChat.currentUIFocusChatId}, contextActiveStream=${streamChat.activeStreamChatId}, navState=${JSON.stringify(navState)}, initialMessagesPropCt=${initialMessagesProp.length}`);
+
+    // Skip state changes if we're in the middle of new chat transition
+    // This prevents double flickering
+    if (isNewChatTransitioning && !urlChatId) {
+      return;
+    }
 
     setChatPhase('INITIALIZING');
 
@@ -662,19 +708,15 @@ export function ChatPageLayout({
       if (streamChat.activeStreamChatId === urlChatId &&
         streamChat.messages.length > 0 &&
         initialMessagesProp.length === 0) {
-        console.log(`ChatPageLayout E1: Using existing messages from context (Stream active for this ID, initialProp empty).`);
         messagesToUse = [...streamChat.messages]; // Use existing context messages
       }
       // Special handling for navigation from new chat flow
       if (navState?.fromNewChatFlow && streamChat.activeStreamChatId === urlChatId) {
-        console.log(`ChatPageLayout E1: Landed on ${urlChatId} from new chat flow. Context is active for this ID. Using context messages.`);
         messagesToUse = [...streamChat.messages]; // Use existing context (which might have streaming content)
       } else if (navState?.fromNewChatFlow && navState.initialMessages) {
-        console.log(`ChatPageLayout E1: Landed on ${urlChatId} from new chat flow. Context NOT active for this ID. Using navState messages.`);
         messagesToUse = navState.initialMessages;
       } else if (streamChat.currentUIFocusChatId !== urlChatId) {
         // Only clear and reset if we're switching to a different chat
-        console.log(`ChatPageLayout E1: Switching to chat ${urlChatId}. Previous focus: ${streamChat.currentUIFocusChatId}`);
         // Don't clear during an active stream
         if (!streamChat.isStreaming || streamChat.activeStreamChatId !== urlChatId) {
           streamChat.clearStreamState();
@@ -691,27 +733,26 @@ export function ChatPageLayout({
           const { fromNewChatFlow: _fNCF, initialMessages: _iM, ...newStateWithoutFlow } = (state as any) || {};
           navigate(restOfLocation, { replace: true, state: Object.keys(newStateWithoutFlow).length > 0 ? newStateWithoutFlow : undefined });
         });
+        // Reset the new chat transition flag since we've completed the transition
+        setIsNewChatTransitioning(false);
       }
       setChatPhase('PREPARING_CONTENT');
     }
+
+
     // Scenario 2: On a new chat page (urlChatId is null)
     else if (!urlChatId) {
-      console.log("ChatPageLayout E1: Initializing for new chat page (urlChatId is null).");
-
       // Only clear if we're coming from a different chat or if there's stale data
       if (streamChat.currentUIFocusChatId !== null ||
         (streamChat.messages.length > 0 && !streamChat.isStreaming)) {
-        console.log("ChatPageLayout E1: Clearing context for new chat page.");
         streamChat.clearStreamState();
-      } else {
-        console.log("ChatPageLayout E1: Context seems aligned for new/unnamed chat or is pristine. Not clearing.");
       }
       setChatPhase('READY');
     }
 
     setHasInitialized(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlChatId, initialMessagesProp, location.pathname]);
+  }, [urlChatId, initialMessagesProp, location.pathname, isNewChatTransitioning]);
 
   // Reset initialization flag when URL changes
   useEffect(() => {
@@ -723,7 +764,6 @@ export function ChatPageLayout({
   // Effect 2: Handle PREPARING_CONTENT phase
   useEffect(() => {
     if (chatPhase === 'PREPARING_CONTENT' && streamChat.currentUIFocusChatId === urlChatId && urlChatId) {
-      console.log(`ChatPageLayout E2: PREPARING_CONTENT for ${urlChatId} -> READY. Scrolling history.`);
       startReactTransition(() => {
         setChatPhase('READY');
         const navState = location.state as { fromNewChatFlow?: boolean } | null;
@@ -738,7 +778,6 @@ export function ChatPageLayout({
     async (inputTextValue: string, modelConfig: AIModelConfig) => {
       const trimmedInput = inputTextValue.trim();
       if (!trimmedInput || streamChat.isStreaming || isReactTransitionPending || chatPhase !== 'READY') {
-        console.warn("ChatPageLayout: Send message aborted.", { isStreaming: streamChat.isStreaming, isReactTransitionPending, chatPhase });
         return;
       }
       setInput('');
@@ -747,52 +786,47 @@ export function ChatPageLayout({
         id: crypto.randomUUID(),
         role: 'user',
         content: trimmedInput,
-        timestamp: Date.now()
       };
 
-      if (!urlChatId) { // Current page is a "new chat" page
+      if (!urlChatId) { // New chat  
         const newChatId = uuidv4();
-        console.log(`ChatPageLayout: New chat. Generated ID: ${newChatId}. Updating context, navigating, then streaming.`);
-
         try {
-          // 1. Set context for the new chat ID with ONLY the user message
-          //    This prepares the context before navigation and stream start.
+          setIsNewChatTransitioning(true);
           streamChat.setMessagesForContext([userMessage], newChatId);
-
-          // 2. Navigate to the new chat's URL
-          const destinationPath = `/chat/${newChatId}`;
-
-          // 3. Start the stream BEFORE navigation completes
-          // This ensures stream initialization isn't disrupted by navigation
           const streamPromise = streamChat.startStream(trimmedInput, modelConfig, newChatId);
 
-          // 4. Navigate to new chat path
-          startReactTransition(() => {
-            navigate(destinationPath, {
-              replace: true,
-              state: { initialMessages: [userMessage], fromNewChatFlow: true },
+          setTimeout(() => {
+            const destinationPath = `/chat/${newChatId}`;
+            startReactTransition(() => {
+              navigate(destinationPath, {
+                replace: true,
+                state: { initialMessages: [userMessage], fromNewChatFlow: true },
+              });
             });
-          });
+          }, 50);
 
-          // 5. Await stream completion (in the background)
           await streamPromise;
+          // Refresh sidebar after assistant is finished  
+          refreshChatHistory();
+
         } catch (error) {
           console.error("Error in new chat flow:", error);
-          // Handle error (could add error state to UI here)
+          setIsNewChatTransitioning(false);
         }
-      } else { // Current page is an existing chat
-        console.log(`ChatPageLayout: Existing chat ${urlChatId}. Sending message.`);
+      } else { // Existing chat  
         try {
-          // Add user message to existing messages in context
           streamChat.setMessagesForContext([...streamChat.messages, userMessage], urlChatId);
           await streamChat.startStream(trimmedInput, modelConfig, urlChatId);
+
+          // Refresh sidebar after assistant is finished  
+          refreshChatHistory();
+
         } catch (error) {
           console.error("Error in existing chat flow:", error);
-          // Handle error (could add error state to UI here)
         }
       }
     },
-    [streamChat, urlChatId, isReactTransitionPending, chatPhase, navigate, startReactTransition]
+    [streamChat, urlChatId, isReactTransitionPending, chatPhase, navigate, startReactTransition, refreshChatHistory]
   );
 
   const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -810,36 +844,20 @@ export function ChatPageLayout({
   };
 
   const isRemixNavigating = remixNavigation.state !== 'idle';
-  const showPageLoader = chatPhase !== 'READY' || isRemixNavigating || isReactTransitionPending;
-
-
-
-  const showMessageAreaContent = chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending;
+  // Modify the content ready check to account for new chat transitions
+  const isContentReady = (chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending) ||
+    (isNewChatTransitioning && streamChat.messages.length > 0);
 
   const childKey = urlChatId || "new-chat-page-active";
 
   return (
     <div className="flex flex-col h-full w-full">
       <div ref={containerRef} className="flex-grow overflow-y-auto overflow-x-hidden relative">
-        {showPageLoader && (
-          <div className="absolute inset-0 flex flex-col justify-center items-center bg-background/80 backdrop-blur-sm z-20 p-4 text-center">
-            <FourSquare color="hsl(var(--primary))" size="medium" />
-            <p className="mt-4 text-sm text-foreground">
-              {isRemixNavigating ? "Navigating..."
-                : isReactTransitionPending ? "Processing..."
-                  : chatPhase === 'INITIALIZING' ? "Initializing chat..."
-                    : chatPhase === 'PREPARING_CONTENT' ? "Loading messages..."
-                      : "Loading..."}
-            </p>
-            {streamChat.streamError && <p className="mt-2 text-destructive text-xs">Error: {streamChat.streamError}</p>}
-          </div>
-        )}
-
+        {/* No visible loading indicators */}
 
         <div
           style={{
-            opacity: showMessageAreaContent ? 1 : 0,
-            pointerEvents: showMessageAreaContent ? 'auto' : 'none',
+            opacity: isContentReady ? 1 : 0,
             transition: 'opacity 0.2s ease-in-out',
             minHeight: '100%',
             display: 'flex',
@@ -859,7 +877,7 @@ export function ChatPageLayout({
                   streamChat.messages[streamChat.messages.length - 1]?.role === "assistant" &&
                   streamChat.messages[streamChat.messages.length - 1]?.isLoading === true
                 }
-                isInitialHistoryLoading={chatPhase === "PREPARING_CONTENT"}
+                isInitialHistoryLoading={false} // Never show history loading
                 scrollEndRef={endRef}
               />
             )}
@@ -1237,79 +1255,82 @@ export function ChatPageLayout({ initialChatId, initialMessages = [] }: ChatPage
 }
 ---- app/routes/__app.tsx ----
 // app/routes/__app.tsx
-import type { LoaderFunctionArgs } from "@remix-run/node";  
-import { json } from "@remix-run/node";  
-import { Outlet, useLoaderData } from "@remix-run/react";  
-  
-import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";  
-import { AppSidebar } from "~/components/app-sidebar";  
-import { SidebarProvider, SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";  
-import type { NavItem } from "~/components/sidebar-nav";  
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import { Outlet, useLoaderData } from "@remix-run/react";
+
+import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";
+import { AppSidebar } from "~/components/app-sidebar";
+import { SidebarProvider, SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";
+import type { NavItem } from "~/components/sidebar-nav";
 import { Separator } from "~/components/ui/separator";
 import { StreamingChatProvider } from "~/components/chat/streaming-chat-context";
+import { SidebarChatHistoryProvider } from "~/components/sidebar-chat-history-context";
 // ADD THIS IMPORT
-  
-export interface AppLoaderData {  
-  user: AuthenticatedUserDetails;  
-  appName: string;  
-  mainNavItems: NavItem[];  
-}  
-  
-export async function loader({ request }: LoaderFunctionArgs) {  
-  await requireAuth(request);  
-  return json<AppLoaderData>({  
-    user: {  
-      id: "dummy",  
-      name: "Dummy",  
-      email: "dummy@example.com",  
-      avatar_url: "/avatars/default.png",  
-    },  
-    appName: "Krivi AI",  
-    mainNavItems: [],  
-  });  
-}  
-  
-export default function AppLayout() {  
-  const { user, appName, mainNavItems } = useLoaderData<typeof loader>();  
-  const sidebarUser = {  
-    name: user.name,  
-    email: user.email,  
-    avatar: "/avatars/default.png",  
-  };  
-  
-  return (  
+
+export interface AppLoaderData {
+  user: AuthenticatedUserDetails;
+  appName: string;
+  mainNavItems: NavItem[];
+}
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAuth(request);
+  return json<AppLoaderData>({
+    user: {
+      id: "dummy",
+      name: "Dummy",
+      email: "dummy@example.com",
+      avatar_url: "/avatars/default.png",
+    },
+    appName: "Krivi AI",
+    mainNavItems: [],
+  });
+}
+
+export default function AppLayout() {
+  const { user, appName, mainNavItems } = useLoaderData<typeof loader>();
+  const sidebarUser = {
+    name: user.name,
+    email: user.email,
+    avatar: "/avatars/default.png",
+  };
+
+  return (
     // WRAP THE ENTIRE SIDEBAR PROVIDER (OR JUST THE OUTLET PART IF SIDEBAR IS NOT CHAT RELATED)
     // WITH STREAMINGCHATPROVIDER. For chat apps, often the whole app structure is relevant.
-    <StreamingChatProvider> 
-      <SidebarProvider>  
-        <AppSidebar  
-          user={sidebarUser}  
-          appName={appName}  
-          mainNav={mainNavItems}  
-        />  
-        <SidebarInset>  
-          <div className="relative flex flex-col h-[100dvh] min-h-0 w-full">  
-            <header  
-              className="  
+    <SidebarChatHistoryProvider>
+      <StreamingChatProvider>
+        <SidebarProvider>
+          <AppSidebar
+            user={sidebarUser}
+            appName={appName}
+            mainNav={mainNavItems}
+          />
+          <SidebarInset>
+            <div className="relative flex flex-col h-[100dvh] min-h-0 w-full">
+              <header
+                className="  
                 sticky top-0 left-0 right-0 z-30 flex  
                 h-[41px] md:h-[62px]  
                 shrink-0 items-center gap-2 border-b border-border bg-background  
-              "  
-            >  
-              <div className="flex items-center gap-2 px-4">  
-                <SidebarTrigger className="-ml-1" />  
-                <Separator orientation="vertical" className="mr-2 h-4 bg-border" />  
-              </div>  
-            </header>  
-            <main className="relative flex-1 min-h-0 w-full flex flex-col">  
-              {/* Outlet is where your /chat and /chat/:id routes render */}
-              <Outlet /> 
-            </main>  
-          </div>  
-        </SidebarInset>  
-      </SidebarProvider>
-    </StreamingChatProvider> 
-  );  
+              "
+              >
+                <div className="flex items-center gap-2 px-4">
+                  <SidebarTrigger className="-ml-1" />
+                  <Separator orientation="vertical" className="mr-2 h-4 bg-border" />
+                </div>
+              </header>
+              <main className="relative flex-1 min-h-0 w-full flex flex-col">
+                {/* Outlet is where your /chat and /chat/:id routes render */}
+                <Outlet />
+              </main>
+            </div>
+          </SidebarInset>
+        </SidebarProvider>
+      </StreamingChatProvider>
+    </SidebarChatHistoryProvider>
+  );
 }
 ---- app/routes/__app.chat.$chatId.tsx ----
 // app/routes/__app.chat.$chatId.tsx
@@ -1713,79 +1734,82 @@ export function useScrollToBottom(messages: Message[]) {
 }
 ---- app/routes/__app.tsx ----
 // app/routes/__app.tsx
-import type { LoaderFunctionArgs } from "@remix-run/node";  
-import { json } from "@remix-run/node";  
-import { Outlet, useLoaderData } from "@remix-run/react";  
-  
-import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";  
-import { AppSidebar } from "~/components/app-sidebar";  
-import { SidebarProvider, SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";  
-import type { NavItem } from "~/components/sidebar-nav";  
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import { Outlet, useLoaderData } from "@remix-run/react";
+
+import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";
+import { AppSidebar } from "~/components/app-sidebar";
+import { SidebarProvider, SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";
+import type { NavItem } from "~/components/sidebar-nav";
 import { Separator } from "~/components/ui/separator";
 import { StreamingChatProvider } from "~/components/chat/streaming-chat-context";
+import { SidebarChatHistoryProvider } from "~/components/sidebar-chat-history-context";
 // ADD THIS IMPORT
-  
-export interface AppLoaderData {  
-  user: AuthenticatedUserDetails;  
-  appName: string;  
-  mainNavItems: NavItem[];  
-}  
-  
-export async function loader({ request }: LoaderFunctionArgs) {  
-  await requireAuth(request);  
-  return json<AppLoaderData>({  
-    user: {  
-      id: "dummy",  
-      name: "Dummy",  
-      email: "dummy@example.com",  
-      avatar_url: "/avatars/default.png",  
-    },  
-    appName: "Krivi AI",  
-    mainNavItems: [],  
-  });  
-}  
-  
-export default function AppLayout() {  
-  const { user, appName, mainNavItems } = useLoaderData<typeof loader>();  
-  const sidebarUser = {  
-    name: user.name,  
-    email: user.email,  
-    avatar: "/avatars/default.png",  
-  };  
-  
-  return (  
+
+export interface AppLoaderData {
+  user: AuthenticatedUserDetails;
+  appName: string;
+  mainNavItems: NavItem[];
+}
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAuth(request);
+  return json<AppLoaderData>({
+    user: {
+      id: "dummy",
+      name: "Dummy",
+      email: "dummy@example.com",
+      avatar_url: "/avatars/default.png",
+    },
+    appName: "Krivi AI",
+    mainNavItems: [],
+  });
+}
+
+export default function AppLayout() {
+  const { user, appName, mainNavItems } = useLoaderData<typeof loader>();
+  const sidebarUser = {
+    name: user.name,
+    email: user.email,
+    avatar: "/avatars/default.png",
+  };
+
+  return (
     // WRAP THE ENTIRE SIDEBAR PROVIDER (OR JUST THE OUTLET PART IF SIDEBAR IS NOT CHAT RELATED)
     // WITH STREAMINGCHATPROVIDER. For chat apps, often the whole app structure is relevant.
-    <StreamingChatProvider> 
-      <SidebarProvider>  
-        <AppSidebar  
-          user={sidebarUser}  
-          appName={appName}  
-          mainNav={mainNavItems}  
-        />  
-        <SidebarInset>  
-          <div className="relative flex flex-col h-[100dvh] min-h-0 w-full">  
-            <header  
-              className="  
+    <SidebarChatHistoryProvider>
+      <StreamingChatProvider>
+        <SidebarProvider>
+          <AppSidebar
+            user={sidebarUser}
+            appName={appName}
+            mainNav={mainNavItems}
+          />
+          <SidebarInset>
+            <div className="relative flex flex-col h-[100dvh] min-h-0 w-full">
+              <header
+                className="  
                 sticky top-0 left-0 right-0 z-30 flex  
                 h-[41px] md:h-[62px]  
                 shrink-0 items-center gap-2 border-b border-border bg-background  
-              "  
-            >  
-              <div className="flex items-center gap-2 px-4">  
-                <SidebarTrigger className="-ml-1" />  
-                <Separator orientation="vertical" className="mr-2 h-4 bg-border" />  
-              </div>  
-            </header>  
-            <main className="relative flex-1 min-h-0 w-full flex flex-col">  
-              {/* Outlet is where your /chat and /chat/:id routes render */}
-              <Outlet /> 
-            </main>  
-          </div>  
-        </SidebarInset>  
-      </SidebarProvider>
-    </StreamingChatProvider> 
-  );  
+              "
+              >
+                <div className="flex items-center gap-2 px-4">
+                  <SidebarTrigger className="-ml-1" />
+                  <Separator orientation="vertical" className="mr-2 h-4 bg-border" />
+                </div>
+              </header>
+              <main className="relative flex-1 min-h-0 w-full flex flex-col">
+                {/* Outlet is where your /chat and /chat/:id routes render */}
+                <Outlet />
+              </main>
+            </div>
+          </SidebarInset>
+        </SidebarProvider>
+      </StreamingChatProvider>
+    </SidebarChatHistoryProvider>
+  );
 }
 ---- app/routes/__app.chat.$chatId.tsx ----
 // app/routes/__app.chat.$chatId.tsx

@@ -1,13 +1,11 @@
 // app/routes/__app.chat.$chatId.tsx
 import { useLoaderData, useLocation, useParams } from "@remix-run/react";
-import { json, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
 import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
 import type { Message } from "~/components/chat/MessageItem";
 import { API_HISTORY_URL_BASE } from "~/lib/ai-models";
+import { json, LoaderFunctionArgs } from "@remix-run/node";
 
-// ... (meta function and loader remain the same)
-export const meta: MetaFunction = ({ params }) => [{ title: `Chat ${params.chatId ? `- ${params.chatId.substring(0,8)}` : ''} | Krivi AI` }];
 
 interface LoaderData {
   chatId: string;

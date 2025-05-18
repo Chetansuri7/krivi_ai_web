@@ -7,6 +7,7 @@ import { Separator } from "~/components/ui/separator";
 import { cn } from "~/lib/utils";
 import { getApiUrl } from "~/lib/api.config";
 import { useSidebar } from "./ui/sidebar";
+import { useSidebarChatHistory } from "./sidebar-chat-history-context";
 
 type LucideIcon = LucideIconType;
 
@@ -64,7 +65,6 @@ const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[]
     prev7Days: [],
     prev30Days: [],
   };
-
   chatSessions.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
 
   chatSessions.forEach(session => {
@@ -112,7 +112,7 @@ const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[]
  */
 const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item, isSubItem = false }) => {
   const [isOpen, setIsOpen] = React.useState(item.isActive ?? false);
-const { isMobile, setOpenMobile } = useSidebar(); // 👈 add this  
+  const { isMobile, setOpenMobile } = useSidebar(); // 👈 add this  
 
   if (item.isGroupLabel) {
     return (
@@ -215,6 +215,7 @@ export function SidebarNav({ mainNav }: SidebarNavProps) {
   const [chatHistoryNavItems, setChatHistoryNavItems] = React.useState<NavItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = React.useState(true);
   const [errorHistory, setErrorHistory] = React.useState<string | null>(null);
+  const { lastRefreshTimestamp } = useSidebarChatHistory();
 
   const refreshChatHistory = React.useCallback(async () => {
     setIsLoadingHistory(true);
@@ -249,7 +250,7 @@ export function SidebarNav({ mainNav }: SidebarNavProps) {
     }
   }, []);
 
-  React.useEffect(() => { refreshChatHistory(); }, [refreshChatHistory]);
+  React.useEffect(() => { refreshChatHistory(); }, [refreshChatHistory,lastRefreshTimestamp]);
 
   return (
     <div className="flex flex-col h-full p-2 space-y-1">
