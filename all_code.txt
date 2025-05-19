@@ -89,6 +89,16 @@ export const AImodels: AIModelConfig[] = [
     displayName: "Gemini 2.0 flash", // Updated display name to match model version (optional, adjust as needed)
     model: "gemini-2.0-flash", // From your example payload
     provider: "google",
+  },
+  {
+    displayName: "llama3.1-8b", // Updated display name to match model version (optional, adjust as needed)
+    model: "llama3.1-8b", // From your example payload
+    provider: "cerebras",
+  },
+  {
+    displayName: "qwen-3-32b", // Updated display name to match model version (optional, adjust as needed)
+    model: "qwen-3-32b", // From your example payload
+    provider: "cerebras",
   }
   // Add more models here as needed
 ];
@@ -282,12 +292,12 @@ export function useIsMobile() {
 
   return !!isMobile
 }--- app/hooks/useScrollToBottom.ts ---
-// app/hooks/useScrollToBottom.ts
+// Modified useScrollToBottom.ts hook
 
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { Message } from '~/components/chat/MessageItem';
 
-const INTERSECTION_THRESHOLD_PX = 30; // MODIFIED: Was 50, now 30
+const INTERSECTION_THRESHOLD_PX = 30;
 const USER_SCROLL_DEBOUNCE_MS = 150;
 
 export function useScrollToBottom(messages: Message[]) {
@@ -297,7 +307,21 @@ export function useScrollToBottom(messages: Message[]) {
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [showScrollDownButton, setShowScrollDownButton] = useState(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const userManuallyScrolled = useRef(false);
+  const lastMessageCount = useRef(0);
 
+  // Function to scroll to specific position
+  const scrollToPosition = useCallback((position: number, behavior: ScrollBehavior = 'smooth') => {
+    const scrollableContainer = containerRef.current;
+    if (scrollableContainer) {
+      scrollableContainer.scrollTo({
+        top: position,
+        behavior,
+      });
+    }
+  }, []);
+
+  // Complete scroll to bottom function (unchanged)
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const scrollableContainer = containerRef.current;
     const bottomMarker = endRef.current;
@@ -314,6 +338,92 @@ export function useScrollToBottom(messages: Message[]) {
     setShowScrollDownButton(false);
   }, []);
 
+  // New function for 30/70 scrolling
+  const scrollToPartialView = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const scrollableContainer = containerRef.current;
+    if (!scrollableContainer || userManuallyScrolled.current) return;
+
+    // Calculate the position that shows 30% previous content, 70% new content
+    const containerHeight = scrollableContainer.clientHeight;
+    const scrollHeight = scrollableContainer.scrollHeight;
+    
+    // Position to show 30% of previous content at the top
+    // This means we want to position the scroll so that we're 70% down the way
+    // from (scrollHeight - containerHeight) which is the maximum scroll position
+    const newPosition = Math.max(
+      0,
+      (scrollHeight - containerHeight) * 0.7
+    );
+    
+    scrollToPosition(newPosition, behavior);
+  }, [scrollToPosition]);
+
+  // Track user manual scrolling
+  useEffect(() => {
+    const scrollableContainer = containerRef.current;
+    if (!scrollableContainer) return;
+
+    const handleScroll = () => {
+      // Consider any scroll during active interaction as manual
+      userManuallyScrolled.current = true;
+      
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+
+      scrollTimeoutRef.current = setTimeout(() => {
+        if (scrollableContainer) {
+          const { scrollTop, scrollHeight, clientHeight } = scrollableContainer;
+          const isNearBottom = scrollHeight - scrollTop - clientHeight < INTERSECTION_THRESHOLD_PX + 5;
+
+          if (!isNearBottom) {
+            if (!showScrollDownButton) setShowScrollDownButton(true);
+            if (isAtBottom) setIsAtBottom(false);
+          } else {
+            if (showScrollDownButton) setShowScrollDownButton(false);
+            if (!isAtBottom) setIsAtBottom(true);
+            // Reset manual scroll flag when user scrolls back to bottom
+            userManuallyScrolled.current = false;
+          }
+        }
+      }, USER_SCROLL_DEBOUNCE_MS);
+    };
+
+    scrollableContainer.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      scrollableContainer.removeEventListener('scroll', handleScroll);
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    };
+  }, [isAtBottom, showScrollDownButton]);
+
+  // Handle new messages logic
+  useEffect(() => {
+    // Reset manual scroll flag on first render
+    if (messages.length === 0) {
+      userManuallyScrolled.current = false;
+    }
+    
+    // If new message was added
+    if (messages.length > lastMessageCount.current) {
+      // If this is a user message, apply the partial view scroll
+      const lastMessage = messages[messages.length - 1];
+      
+      // When a new user message is sent, do partial scroll
+      if (lastMessage && lastMessage.role === 'user') {
+        // Short delay to allow DOM to update
+        setTimeout(() => scrollToPartialView(), 50);
+      } 
+      // When receiving AI response and user hasn't manually scrolled
+      else if (lastMessage && lastMessage.role === 'assistant' && !userManuallyScrolled.current) {
+        // If at bottom or was already showing partial view, maintain position
+        if (isAtBottom) {
+          setTimeout(() => scrollToBottom('auto'), 10);
+        }
+      }
+      
+      lastMessageCount.current = messages.length;
+    }
+  }, [messages, isAtBottom, scrollToBottom, scrollToPartialView]);
+
+  // Observer to track if we're at bottom (unchanged)
   useEffect(() => {
     const scrollableContainer = containerRef.current;
     const bottomMarker = endRef.current;
@@ -353,39 +463,12 @@ export function useScrollToBottom(messages: Message[]) {
       observer.unobserve(bottomMarker);
       observer.disconnect();
     };
-  }, [containerRef, endRef]); // Removed INTERSECTION_THRESHOLD_PX from deps as it's const now
+  }, [containerRef, endRef]);
 
-  useEffect(() => {
-    const scrollableContainer = containerRef.current;
-    if (!scrollableContainer) return;
-
-    const handleScroll = () => {
-      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-
-      scrollTimeoutRef.current = setTimeout(() => {
-        if (scrollableContainer) {
-          const { scrollTop, scrollHeight, clientHeight } = scrollableContainer;
-          const isNearBottom =
-            scrollHeight - scrollTop - clientHeight <
-            INTERSECTION_THRESHOLD_PX + 5; 
-
-          if (!isNearBottom) {
-            if (!showScrollDownButton) setShowScrollDownButton(true);
-            if (isAtBottom) setIsAtBottom(false);
-          } else {
-            if (showScrollDownButton) setShowScrollDownButton(false);
-            if (!isAtBottom) setIsAtBottom(true);
-          }
-        }
-      }, USER_SCROLL_DEBOUNCE_MS);
-    };
-
-    scrollableContainer.addEventListener('scroll', handleScroll, { passive: true });
-    return () => {
-      scrollableContainer.removeEventListener('scroll', handleScroll);
-      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-    };
-  }, [containerRef, showScrollDownButton, isAtBottom]); // Removed INTERSECTION_THRESHOLD_PX from deps
+  // Reset userManuallyScrolled flag when we navigate to a new chat
+  const resetManualScrollFlag = useCallback(() => {
+    userManuallyScrolled.current = false;
+  }, []);
 
   return {
     containerRef,
@@ -393,6 +476,8 @@ export function useScrollToBottom(messages: Message[]) {
     isAtBottom,
     showScrollDownButton,
     scrollToBottom,
+    scrollToPartialView,
+    resetManualScrollFlag
   };
 }--- app/root.tsx ---
 import {
@@ -443,90 +528,95 @@ export default function App() {
   return <Outlet />;
 }--- app/routes/__app.tsx ---
 // app/routes/__app.tsx
-import type { LoaderFunctionArgs } from "@remix-run/node";  
-import { json } from "@remix-run/node";  
-import { Outlet, useLoaderData } from "@remix-run/react";  
-  
-import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";  
-import { AppSidebar } from "~/components/app-sidebar";  
-import { SidebarProvider, SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";  
-import type { NavItem } from "~/components/sidebar-nav";  
+import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import { Outlet, useLoaderData } from "@remix-run/react";
+
+import { requireAuth, type AuthenticatedUserDetails } from "~/lib/auth.server";
+import { AppSidebar } from "~/components/app-sidebar";
+import { SidebarProvider, SidebarInset, SidebarTrigger } from "~/components/ui/sidebar";
+import type { NavItem } from "~/components/sidebar-nav";
 import { Separator } from "~/components/ui/separator";
 import { StreamingChatProvider } from "~/components/chat/streaming-chat-context";
+import { SidebarChatHistoryProvider } from "~/components/sidebar-chat-history-context";
 // ADD THIS IMPORT
-  
-export interface AppLoaderData {  
-  user: AuthenticatedUserDetails;  
-  appName: string;  
-  mainNavItems: NavItem[];  
-}  
-  
-export async function loader({ request }: LoaderFunctionArgs) {  
-  await requireAuth(request);  
-  return json<AppLoaderData>({  
-    user: {  
-      id: "dummy",  
-      name: "Dummy",  
-      email: "dummy@example.com",  
-      avatar_url: "/avatars/default.png",  
-    },  
-    appName: "Krivi AI",  
-    mainNavItems: [],  
-  });  
-}  
-  
-export default function AppLayout() {  
-  const { user, appName, mainNavItems } = useLoaderData<typeof loader>();  
-  const sidebarUser = {  
-    name: user.name,  
-    email: user.email,  
-    avatar: "/avatars/default.png",  
-  };  
-  
-  return (  
+
+export interface AppLoaderData {
+  user: AuthenticatedUserDetails;
+  appName: string;
+  mainNavItems: NavItem[];
+}
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  await requireAuth(request);
+  return json<AppLoaderData>({
+    user: {
+      id: "dummy",
+      name: "Dummy",
+      email: "dummy@example.com",
+      avatar_url: "/avatars/default.png",
+    },
+    appName: "Krivi AI",
+    mainNavItems: [],
+  });
+}
+
+export const meta: MetaFunction = () => [  
+  { title: "Krivi AI | Ignite & Flow" }  
+];  
+
+export default function AppLayout() {
+  const { user, appName, mainNavItems } = useLoaderData<typeof loader>();
+  const sidebarUser = {
+    name: user.name,
+    email: user.email,
+    avatar: "/avatars/default.png",
+  };
+
+  return (
     // WRAP THE ENTIRE SIDEBAR PROVIDER (OR JUST THE OUTLET PART IF SIDEBAR IS NOT CHAT RELATED)
     // WITH STREAMINGCHATPROVIDER. For chat apps, often the whole app structure is relevant.
-    <StreamingChatProvider> 
-      <SidebarProvider>  
-        <AppSidebar  
-          user={sidebarUser}  
-          appName={appName}  
-          mainNav={mainNavItems}  
-        />  
-        <SidebarInset>  
-          <div className="relative flex flex-col h-[100dvh] min-h-0 w-full">  
-            <header  
-              className="  
+    <SidebarChatHistoryProvider>
+      <StreamingChatProvider>
+        <SidebarProvider>
+          <AppSidebar
+            user={sidebarUser}
+            appName={appName}
+            mainNav={mainNavItems}
+          />
+          <SidebarInset>
+            <div className="relative flex flex-col h-[100dvh] min-h-0 w-full">
+              <header
+                className="  
                 sticky top-0 left-0 right-0 z-30 flex  
                 h-[41px] md:h-[62px]  
                 shrink-0 items-center gap-2 border-b border-border bg-background  
-              "  
-            >  
-              <div className="flex items-center gap-2 px-4">  
-                <SidebarTrigger className="-ml-1" />  
-                <Separator orientation="vertical" className="mr-2 h-4 bg-border" />  
-              </div>  
-            </header>  
-            <main className="relative flex-1 min-h-0 w-full flex flex-col">  
-              {/* Outlet is where your /chat and /chat/:id routes render */}
-              <Outlet /> 
-            </main>  
-          </div>  
-        </SidebarInset>  
-      </SidebarProvider>
-    </StreamingChatProvider> 
-  );  
+              "
+              >
+                <div className="flex items-center gap-2 px-4">
+                  <SidebarTrigger className="-ml-1" />
+                  <Separator orientation="vertical" className="mr-2 h-4 bg-border" />
+                </div>
+              </header>
+              <main className="relative flex-1 min-h-0 w-full flex flex-col">
+                {/* Outlet is where your /chat and /chat/:id routes render */}
+                <Outlet />
+              </main>
+            </div>
+          </SidebarInset>
+        </SidebarProvider>
+      </StreamingChatProvider>
+    </SidebarChatHistoryProvider>
+  );
 }--- app/routes/__app.chat.$chatId.tsx ---
 // app/routes/__app.chat.$chatId.tsx
 import { useLoaderData, useLocation, useParams } from "@remix-run/react";
-import { json, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { requireAuth } from "~/lib/auth.server";
 import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
 import type { Message } from "~/components/chat/MessageItem";
 import { API_HISTORY_URL_BASE } from "~/lib/ai-models";
+import { json, LoaderFunctionArgs } from "@remix-run/node";
 
-// ... (meta function and loader remain the same)
-export const meta: MetaFunction = ({ params }) => [{ title: `Chat ${params.chatId ? `- ${params.chatId.substring(0,8)}` : ''} | Krivi AI` }];
 
 interface LoaderData {
   chatId: string;
@@ -747,7 +837,8 @@ import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
 import { requireAuth } from "~/lib/auth.server";
 import type { Message } from "~/components/chat/MessageItem";
 
-export const meta: MetaFunction = () => [{ title: "New Chat | Krivi AI" }];
+export const meta: MetaFunction = () => [{ title: "Krivi AI" }];  
+
 
 export async function loader({ request }: LoaderFunctionArgs) {
   await requireAuth(request);
@@ -790,499 +881,495 @@ startTransition(() => {
   );
 });
 --- app/components/sidebar-nav.tsx ---
-import * as React from "react";  
-import { Link, useNavigate } from "@remix-run/react";  
-import { ChevronRight, type LucideIcon as LucideIconType } from "lucide-react";  
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";  
-import { Button } from "~/components/ui/button";  
-import { Separator } from "~/components/ui/separator";  
-import { cn } from "~/lib/utils";  
-import { getApiUrl } from "~/lib/api.config";  
-  
-type LucideIcon = LucideIconType;  
-  
-export interface NavSubItem {  
-  id: string;  
-  title: string;  
-  href: string;  
-  isActive?: boolean;  
-}  
-  
-export interface NavItem {  
-  id: string;  
-  title: string;  
-  href?: string;  
-  icon?: LucideIcon;  
-  isActive?: boolean;  
+import * as React from "react";
+import { Link, useNavigate } from "@remix-run/react";
+import { ChevronRight, type LucideIcon as LucideIconType } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/components/ui/collapsible";
+import { Button } from "~/components/ui/button";
+import { Separator } from "~/components/ui/separator";
+import { cn } from "~/lib/utils";
+import { getApiUrl } from "~/lib/api.config";
+import { useSidebar } from "./ui/sidebar";
+import { useSidebarChatHistory } from "./sidebar-chat-history-context";
+
+type LucideIcon = LucideIconType;
+
+export interface NavSubItem {
+  id: string;
+  title: string;
+  href: string;
+  isActive?: boolean;
+}
+
+export interface NavItem {
+  id: string;
+  title: string;
+  href?: string;
+  icon?: LucideIcon;
+  isActive?: boolean;
   subItems?: NavSubItem[]; // could be NavItem[] but keep as is for simplicity  
-  isGroupLabel?: boolean;  
-}  
-  
-interface SidebarNavProps {  
-  mainNav: NavItem[];  
-}  
-  
-interface ApiChatSession {  
-  chatId: string;  
-  title: string;  
-  createdAt: string;  
-  lastMessageAt: string;  
-}  
-  
+  isGroupLabel?: boolean;
+}
+
+interface SidebarNavProps {
+  mainNav: NavItem[];
+}
+
+interface ApiChatSession {
+  ChatId: string;
+  Title: string;
+  CreatedAt: string;
+  LastMessageAt: string;
+}
+
 // --- Utility ---  
-const getStartOfDay = (date: Date): Date => {  
-  const d = new Date(date);  
-  d.setHours(0, 0, 0, 0);  
-  return d;  
-};  
-  
-const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[] => {  
-  const navItems: NavItem[] = [];  
-  if (!Array.isArray(chatSessions) || chatSessions.length === 0) return navItems;  
-  
-  const now = new Date();  
-  const todayStart = getStartOfDay(now);  
-  const yesterdayStart = new Date(todayStart);  
-  yesterdayStart.setDate(todayStart.getDate() - 1);  
-  const sevenDaysAgoStart = new Date(todayStart);  
-  sevenDaysAgoStart.setDate(todayStart.getDate() - 7);  
-  const thirtyDaysAgoStart = new Date(todayStart);  
-  thirtyDaysAgoStart.setDate(todayStart.getDate() - 30);  
-  
-  const sections: { [key: string]: ApiChatSession[] } = {  
-    today: [],  
-    yesterday: [],  
-    prev7Days: [],  
-    prev30Days: [],  
-  };  
-  
-  chatSessions.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());  
-  
-  chatSessions.forEach(session => {  
-    const sessionDate = new Date(session.lastMessageAt);  
-    if (sessionDate >= todayStart)  
-      sections.today.push(session);  
-    else if (sessionDate >= yesterdayStart)  
-      sections.yesterday.push(session);  
-    else if (sessionDate >= sevenDaysAgoStart)  
-      sections.prev7Days.push(session);  
-    else if (sessionDate >= thirtyDaysAgoStart)  
-      sections.prev30Days.push(session);  
-  });  
-  
-  const createChatNavItem = (session: ApiChatSession): NavItem => ({  
-    id: `chat-${session.chatId}`,  
-    title: session.title.length > 30 ? session.title.substring(0, 27) + "..." : session.title,  
-    href: `/chat/${session.chatId}`,  
-  });  
-  
-  if (sections.today.length > 0) {  
-    navItems.push({ id: 'ch-label-today', title: 'Today', isGroupLabel: true });  
-    sections.today.forEach(s => navItems.push(createChatNavItem(s)));  
-  }  
-  if (sections.yesterday.length > 0) {  
-    navItems.push({ id: 'ch-label-yesterday', title: 'Yesterday', isGroupLabel: true });  
-    sections.yesterday.forEach(s => navItems.push(createChatNavItem(s)));  
-  }  
-  if (sections.prev7Days.length > 0) {  
-    navItems.push({ id: 'ch-label-prev7', title: 'Previous 7 days', isGroupLabel: true });  
-    sections.prev7Days.forEach(s => navItems.push(createChatNavItem(s)));  
-  }  
-  if (sections.prev30Days.length > 0) {  
-    navItems.push({ id: 'ch-label-prev30', title: 'Previous 30 days', isGroupLabel: true });  
-    sections.prev30Days.forEach(s => navItems.push(createChatNavItem(s)));  
-  }  
-  
-  return navItems;  
-};  
-  
+const getStartOfDay = (date: Date): Date => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[] => {
+  const navItems: NavItem[] = [];
+  if (!Array.isArray(chatSessions) || chatSessions.length === 0) return navItems;
+
+  const now = new Date();
+  const todayStart = getStartOfDay(now);
+  const yesterdayStart = new Date(todayStart);
+  yesterdayStart.setDate(todayStart.getDate() - 1);
+  const sevenDaysAgoStart = new Date(todayStart);
+  sevenDaysAgoStart.setDate(todayStart.getDate() - 7);
+  const thirtyDaysAgoStart = new Date(todayStart);
+  thirtyDaysAgoStart.setDate(todayStart.getDate() - 30);
+
+  const sections: { [key: string]: ApiChatSession[] } = {
+    today: [],
+    yesterday: [],
+    prev7Days: [],
+    prev30Days: [],
+  };
+  chatSessions.sort((a, b) => new Date(b.LastMessageAt).getTime() - new Date(a.LastMessageAt).getTime());
+
+  chatSessions.forEach(session => {
+    const sessionDate = new Date(session.LastMessageAt);
+    if (sessionDate >= todayStart)
+      sections.today.push(session);
+    else if (sessionDate >= yesterdayStart)
+      sections.yesterday.push(session);
+    else if (sessionDate >= sevenDaysAgoStart)
+      sections.prev7Days.push(session);
+    else if (sessionDate >= thirtyDaysAgoStart)
+      sections.prev30Days.push(session);
+  });
+
+  const createChatNavItem = (session: ApiChatSession): NavItem => ({
+    id: `chat-${session.ChatId}`,
+    title: session.Title.length > 30 ? session.Title.substring(0, 27) + "..." : session.Title,
+    href: `/chat/${session.ChatId}`,
+  });
+
+  if (sections.today.length > 0) {
+    navItems.push({ id: 'ch-label-today', title: 'Today', isGroupLabel: true });
+    sections.today.forEach(s => navItems.push(createChatNavItem(s)));
+  }
+  if (sections.yesterday.length > 0) {
+    navItems.push({ id: 'ch-label-yesterday', title: 'Yesterday', isGroupLabel: true });
+    sections.yesterday.forEach(s => navItems.push(createChatNavItem(s)));
+  }
+  if (sections.prev7Days.length > 0) {
+    navItems.push({ id: 'ch-label-prev7', title: 'Previous 7 days', isGroupLabel: true });
+    sections.prev7Days.forEach(s => navItems.push(createChatNavItem(s)));
+  }
+  if (sections.prev30Days.length > 0) {
+    navItems.push({ id: 'ch-label-prev30', title: 'Previous 30 days', isGroupLabel: true });
+    sections.prev30Days.forEach(s => navItems.push(createChatNavItem(s)));
+  }
+
+  return navItems;
+};
+
 // --- NavItemDisplay ---  
 /**  
  * For simple links (no sub-items), we disable prefetch for chat history entries (and all simple links by default).  
  * If you have other simple sidebar links you want to keep prefetch="intent", adjust the condition!  
- */  
-const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item, isSubItem = false }) => {  
-  const [isOpen, setIsOpen] = React.useState(item.isActive ?? false);  
-  
-  if (item.isGroupLabel) {  
-    return (  
-      <div className="px-3 pt-4 pb-1.5 text-[0.8125rem] font-semibold text-sidebar-foreground">  
-        {item.title}  
-      </div>  
-    );  
-  }  
-  
-  const commonButtonClasses = cn(  
-    "w-full justify-start items-center gap-2.5 h-auto px-3 py-1.5 text-[0.8125rem] font-medium",  
-    isSubItem && "pl-9 pr-3 py-1.5 text-xs",  
-    item.isActive  
-      ? "bg-sidebar-accent text-sidebar-accent-foreground"  
-      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",  
-    "transition-colors rounded-md"  
-  );  
-  
-  // --- SIMPLE LINK (no subItems): always prefetch="none" for chat history ---  
-  if (!item.subItems || item.subItems.length === 0) {  
-    return (  
-      <Button  
-        variant="ghost"  
-        asChild  
-        className={commonButtonClasses}  
-        title={item.title}  
-      >  
-        <Link  
-          to={item.href || "#"}  
-          prefetch="none"  
-        >  
-          {item.icon && (  
-            <item.icon className={cn("size-4 shrink-0", isSubItem && "size-3.5")} />  
-          )}  
-          <span className="truncate flex-1">{item.title}</span>  
-        </Link>  
-      </Button>  
-    );  
-  }  
-  
-  // ---- COLLAPSIBLE GROUP (could have its head as link) ----  
-  return (  
-    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="w-full">  
-      <div className="flex items-center">  
-        <Button  
-          variant="ghost"  
-          asChild={!!item.href}  
-          className={cn(commonButtonClasses, "flex-1")}  
-          title={item.title}  
-          onClick={!item.href ? (e) => { e.preventDefault(); setIsOpen(!isOpen); } : undefined}  
-        >  
-          {item.href ? (  
-            <Link  
-              to={item.href}  
-              prefetch="none" // For collapsible main link, also prevent prefetch  
-              onClick={(e) => {  
-                if (item.subItems && item.subItems.length > 0) {  
-                  e.preventDefault();  
-                  setIsOpen(!isOpen);  
-                }  
-                // else allow navigation  
-              }}  
-            >  
-              {item.icon && <item.icon className="size-4 shrink-0" />}  
-              <span className="truncate flex-1">{item.title}</span>  
-            </Link>  
-          ) : (  
-            <>  
-              {item.icon && <item.icon className="size-4 shrink-0" />}  
-              <span className="truncate flex-1">{item.title}</span>  
-            </>  
-          )}  
-        </Button>  
-        <CollapsibleTrigger asChild>  
-          <Button variant="ghost" size="icon" className="ml-1 size-7 shrink-0">  
-            <ChevronRight className={cn("size-3.5 transition-transform text-sidebar-foreground/60", isOpen && "rotate-90")} />  
-            <span className="sr-only">Toggle {item.title}</span>  
-          </Button>  
-        </CollapsibleTrigger>  
-      </div>  
-      <CollapsibleContent className="pl-3.5 mt-0.5 space-y-0.5">  
-        {/* Apply the same rule recursively to sub-items: prefetch="none" */}  
-        {item.subItems.map((subItem) => (  
-          <NavItemDisplay  
-            key={subItem.id}  
-            // If your subItems are not NavItem, but NavSubItem, convert accordingly:  
-            item={{ ...subItem, icon: (subItem as any).icon || undefined }}  
-            isSubItem  
-          />  
-        ))}  
-      </CollapsibleContent>  
-    </Collapsible>  
-  );  
-};  
-// ----------- MAIN SIDEBARNAV COMPONENT -----------  
-export function SidebarNav({ mainNav }: SidebarNavProps) {  
-  const [chatHistoryNavItems, setChatHistoryNavItems] = React.useState<NavItem[]>([]);  
-  const [isLoadingHistory, setIsLoadingHistory] = React.useState(true);  
-  const [errorHistory, setErrorHistory] = React.useState<string | null>(null);  
-  
-  const refreshChatHistory = React.useCallback(async () => {  
-    setIsLoadingHistory(true);  
-    setErrorHistory(null);  
-    try {  
-      const apiUrl = getApiUrl("CHAT_SESSION_LIST");  
-      const response = await fetch(apiUrl, {  
-        credentials: "include",  
-        headers: { "Accept": "application/json" }  
-      });  
-      if (!response.ok) {  
-        let errorData = `API Error: ${response.status} ${response.statusText}`;  
-        try {  
-          if (response.headers.get("content-type")?.includes("application/json")) {  
-            const jsonData = await response.json();  
-            errorData = jsonData.message || JSON.stringify(jsonData);  
-          } else {  
-            errorData = await response.text();  
-          }  
-        } catch (parseErr) { /* ignore, use statusText */ }  
-        throw new Error(errorData);  
-      }  
-      const data: ApiChatSession[] = await response.json();  
-      const processedNavItems = processChatHistoryToNavItems(data);  
-      setChatHistoryNavItems(processedNavItems);  
-    } catch (err) {  
-      console.error("[SidebarNav] Failed to fetch/process chat history:", err);  
-      setErrorHistory(err instanceof Error ? err.message : "An unknown error occurred.");  
-      setChatHistoryNavItems([]);  
-    } finally {  
-      setIsLoadingHistory(false);  
-    }  
-  }, []);  
-  
-  React.useEffect(() => { refreshChatHistory(); }, [refreshChatHistory]);  
-  
-  return (  
-    <div className="flex flex-col h-full p-2 space-y-1">  
-      {mainNav.length > 0 && (  
-        <nav className="space-y-0.5">  
-          {mainNav.map((item) => <NavItemDisplay key={item.id} item={item} />)}  
-        </nav>  
-      )}  
-  
-      {(mainNav.length > 0 && (isLoadingHistory || chatHistoryNavItems.length > 0 || errorHistory)) && (  
-        <Separator className="my-2 bg-border/60" />  
-      )}  
-  
-      <div className="px-1 pt-1 pb-1 text-base font-semibold text-sidebar-foreground">  
-        Chat History  
-      </div>  
-  
-      <div className="flex-1 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">  
-        {isLoadingHistory ? (  
-          <div className="px-3 py-2 text-sm text-sidebar-foreground/70 text-center">  
-            Loading history…  
-          </div>  
-        ) : errorHistory ? (  
-          <div className="px-3 py-2 text-sm text-destructive text-center break-words">  
-            Error: {errorHistory.substring(0, 150)}{errorHistory.length > 150 && "..."}  
-            <Button variant="link" size="sm" onClick={refreshChatHistory} className="mt-1">  
-              Try again  
-            </Button>  
-          </div>  
-        ) : chatHistoryNavItems.length > 0 ? (  
-          chatHistoryNavItems.map((item) => <NavItemDisplay key={item.id} item={item} />)  
-        ) : (  
-          <div className="px-3 py-2 text-xs text-sidebar-foreground/60 italic">  
-            No chat history found.  
-          </div>  
-        )}  
-      </div>  
-    </div>  
-  );  
-}  --- app/components/Markdown.tsx ---
-import React, { useState } from "react";
-import ReactMarkdown from "react-markdown";
-import type { Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import { FiCopy, FiCheck } from "react-icons/fi";
-import "highlight.js/styles/atom-one-dark.css";
-import type {
-  Element as ProjectHastElement,
-  ElementContent as ProjectHastElementContent,
-} from "hast";
+ */
+const NavItemDisplay: React.FC<{ item: NavItem; isSubItem?: boolean }> = ({ item, isSubItem = false }) => {
+  const [isOpen, setIsOpen] = React.useState(item.isActive ?? false);
+  const { isMobile, setOpenMobile } = useSidebar(); // 👈 add this  
 
-// Utility to robustly extract text content (for copy)  
-const extractText = (nodes?: ProjectHastElementContent[]): string =>
-  !nodes
-    ? ""
-    : nodes
-      .map((node) => {
-        if (node.type === "text") {
-          return node.value || "";
-        }
-        if (node.type === "element" && node.children) {
-          return extractText(node.children as ProjectHastElementContent[]);
-        }
-        return "";
-      })
-      .join("");
-
-// Props for the Markdown component  
-interface MarkdownProps {
-  children: string;
-  className?: string;
-}
-
-// Define the props for the custom code component  
-type CustomCodeRendererProps = React.DetailedHTMLProps<
-  React.HTMLAttributes<HTMLElement>,
-  HTMLElement
-> & {
-  inline?: boolean;
-  node?: ProjectHastElement;
-};
-
-const CustomCodeRenderer: React.FC<CustomCodeRendererProps> = ({
-  node,
-  inline,
-  className,
-  children,
-  ...props
-}) => {
-  const match = /language-(\w+)/.exec(className || "");
-  const language = match ? match[1] : "plaintext";
-
-  const contentString = React.Children.toArray(children)
-    .map((child) =>
-      typeof child === "string" || typeof child === "number"
-        ? child.toString()
-        : ""
-    )
-    .join("");
-
-  const [copied, setCopied] = useState(false);
-
-  // For inline code, use a simpler renderer  
-  if (inline) {
+  if (item.isGroupLabel) {
     return (
-      <code
-        className="px-1 py-0.5 rounded bg-muted font-mono text-sm"
-        {...props}
-      >
-        {children}
-      </code>
+      <div className="px-3 pt-4 pb-1.5 text-[0.8125rem] font-semibold text-sidebar-foreground">
+        {item.title}
+      </div>
     );
   }
 
-  // Full code block rendering  
-  return (
-    <div className="relative rounded-lg overflow-hidden shadow-sm my-4 border border-border bg-card/50 dark:bg-zinc-900/50 w-full">
-      {/* Code Header */}
-      <div className="bg-muted/70 dark:bg-zinc-800/70 text-muted-foreground py-1.5 px-4 font-mono text-xs flex items-center justify-between border-b border-border">
-        <span className="uppercase tracking-wider">{language}</span>
-        <button
-          className="bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded px-2 py-0.5 text-xs flex items-center gap-1 border border-transparent hover:border-border"
-          onClick={() => {
-            navigator.clipboard
-              .writeText(contentString.trim())
-              .then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-              })
-              .catch((err) => console.error("Failed to copy:", err));
-          }}
-          type="button"
-          aria-label="Copy code to clipboard"
-        >
-          {copied ? (
-            <FiCheck size={14} className="text-green-500" />
-          ) : (
-            <FiCopy size={14} />
-          )}
-        </button>
-      </div>
-      {/* Code Content */}
-      <div className="overflow-x-auto w-full">
-        <pre
-          className="p-4 text-sm font-mono text-foreground"
-          style={{
-            margin: 0,
-            tabSize: 2,
-          }}
-        >
-          <code className={`${className || ""}`} {...props}>
-            {children}
-          </code>
-        </pre>
-      </div>
-    </div>
+  const commonButtonClasses = cn(
+    "w-full justify-start items-center gap-2.5 h-auto px-3 py-1.5 text-[0.8125rem] font-medium",
+    isSubItem && "pl-9 pr-3 py-1.5 text-xs",
+    item.isActive
+      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+    "transition-colors rounded-md"
   );
-};
 
-// Custom markdown components overriding ReactMarkdown defaults  
-const markdownComponents: Components = {
-  p: (props) => (
-    <p
-      className="my-3 leading-relaxed text-base w-full break-words"
-      {...props}
-    />
-  ),
-  code: CustomCodeRenderer,
-
-
-  pre: (props) => (
-    <pre className="w-full" {...props} />
-  ),
-
-  table: (props) => (
-    <div className="my-4 overflow-x-auto border border-border rounded-md w-full">
-      <table className="min-w-full divide-y divide-border" {...props} />
-    </div>
-  ),
-  tr: (props) => (
-    <tr
-      className="hover:bg-muted/30 dark:hover:bg-zinc-700/30 transition-colors"
-      {...props}
-    />
-  ),
-  th: (props) => (
-    <th
-      className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider"
-      {...props}
-    />
-  ),
-  td: (props) => (
-    <td
-      className="px-4 py-2.5 text-sm text-foreground break-words"
-      {...props}
-    />
-  ),
-  img: (props) => (
-    <img
-      className="max-w-full h-auto rounded-md my-4"
-      {...props}
-      alt={props.alt || "Image"}
-    />
-  ),
-  blockquote: (props) => (
-    <blockquote
-      className="border-l-4 border-muted pl-4 italic my-4 text-muted-foreground"
-      {...props}
-    />
-  ),
-  ul: (props) => (
-    <ul className="list-disc pl-6 my-4 space-y-2" {...props} />
-  ),
-  ol: (props) => (
-    <ol className="list-decimal pl-6 my-4 space-y-2" {...props} />
-  ),
-  li: (props) => <li className="mb-1" {...props} />,
-  h1: (props) => <h1 className="text-2xl font-bold mt-6 mb-4" {...props} />,
-  h2: (props) => <h2 className="text-xl font-bold mt-5 mb-3" {...props} />,
-  h3: (props) => <h3 className="text-lg font-bold mt-4 mb-2" {...props} />,
-  h4: (props) => <h4 className="text-base font-bold mt-3 mb-2" {...props} />,
-  a: (props) => (
-    <a
-      className="text-primary underline hover:text-primary/80"
-      target="_blank"
-      rel="noopener noreferrer"
-      {...props}
-    />
-  ),
-};
-
-// Main Markdown Component  
-export function Markdown({ children, className }: MarkdownProps) {
-  return (
-    <div className={`w-full ${className || ""}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
-        components={markdownComponents}
-        skipHtml={false}
+  // --- SIMPLE LINK (no subItems): always prefetch="none" for chat history ---  
+  if (!item.subItems || item.subItems.length === 0) {
+    return (
+      <Button
+        variant="ghost"
+        asChild
+        className={commonButtonClasses}
+        title={item.title}
       >
-        {children}
-      </ReactMarkdown>
+        <Link
+          to={item.href || "#"}
+          prefetch="none"
+          onClick={() => {
+            if (isMobile) setOpenMobile(false); // 👈 Only close when mobile  
+          }}
+        >
+          {item.icon && (
+            <item.icon className={cn("size-4 shrink-0", isSubItem && "size-3.5")} />
+          )}
+          <span className="truncate flex-1">{item.title}</span>
+        </Link>
+      </Button>
+    );
+  }
+
+  // ---- COLLAPSIBLE GROUP (could have its head as link) ----  
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="w-full">
+      <div className="flex items-center">
+        <Button
+          variant="ghost"
+          asChild={!!item.href}
+          className={cn(commonButtonClasses, "flex-1")}
+          title={item.title}
+          onClick={!item.href ? (e) => { e.preventDefault(); setIsOpen(!isOpen); } : undefined}
+        >
+          {item.href ? (
+            <Link
+              to={item.href}
+              prefetch="none" // For collapsible main link, also prevent prefetch  
+              onClick={(e) => {
+                if (item.subItems && item.subItems.length > 0) {
+                  e.preventDefault();
+                  setIsOpen(!isOpen);
+                }
+                // else allow navigation  
+              }}
+            >
+              {item.icon && <item.icon className="size-4 shrink-0" />}
+              <span className="truncate flex-1">{item.title}</span>
+            </Link>
+          ) : (
+            <>
+              {item.icon && <item.icon className="size-4 shrink-0" />}
+              <span className="truncate flex-1">{item.title}</span>
+            </>
+          )}
+        </Button>
+        <CollapsibleTrigger asChild>
+          <Button variant="ghost" size="icon" className="ml-1 size-7 shrink-0">
+            <ChevronRight className={cn("size-3.5 transition-transform text-sidebar-foreground/60", isOpen && "rotate-90")} />
+            <span className="sr-only">Toggle {item.title}</span>
+          </Button>
+        </CollapsibleTrigger>
+      </div>
+      <CollapsibleContent className="pl-3.5 mt-0.5 space-y-0.5">
+        {/* Apply the same rule recursively to sub-items: prefetch="none" */}
+        {item.subItems.map((subItem) => (
+          <NavItemDisplay
+            key={subItem.id}
+            // If your subItems are not NavItem, but NavSubItem, convert accordingly:  
+            item={{ ...subItem, icon: (subItem as any).icon || undefined }}
+            isSubItem
+          />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+};
+// ----------- MAIN SIDEBARNAV COMPONENT -----------  
+export function SidebarNav({ mainNav }: SidebarNavProps) {
+  const [chatHistoryNavItems, setChatHistoryNavItems] = React.useState<NavItem[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = React.useState(true);
+  const [errorHistory, setErrorHistory] = React.useState<string | null>(null);
+  const { lastRefreshTimestamp } = useSidebarChatHistory();
+
+  const refreshChatHistory = React.useCallback(async () => {
+    setIsLoadingHistory(true);
+    setErrorHistory(null);
+    try {
+      const apiUrl = getApiUrl("CHAT_SESSION_LIST");
+      const response = await fetch(apiUrl, {
+        credentials: "include",
+        headers: { "Accept": "application/json" }
+      });
+      if (!response.ok) {
+        let errorData = `API Error: ${response.status} ${response.statusText}`;
+        try {
+          if (response.headers.get("content-type")?.includes("application/json")) {
+            const jsonData = await response.json();
+            errorData = jsonData.message || JSON.stringify(jsonData);
+          } else {
+            errorData = await response.text();
+          }
+        } catch (parseErr) { /* ignore, use statusText */ }
+        throw new Error(errorData);
+      }
+      const data: ApiChatSession[] = await response.json();
+      const processedNavItems = processChatHistoryToNavItems(data);
+      setChatHistoryNavItems(processedNavItems);
+    } catch (err) {
+      console.error("[SidebarNav] Failed to fetch/process chat history:", err);
+      setErrorHistory(err instanceof Error ? err.message : "An unknown error occurred.");
+      setChatHistoryNavItems([]);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, []);
+
+  React.useEffect(() => { refreshChatHistory(); }, [refreshChatHistory,lastRefreshTimestamp]);
+
+  return (
+    <div className="flex flex-col h-full p-2 space-y-1">
+      {mainNav.length > 0 && (
+        <nav className="space-y-0.5">
+          {mainNav.map((item) => <NavItemDisplay key={item.id} item={item} />)}
+        </nav>
+      )}
+
+      {(mainNav.length > 0 && (isLoadingHistory || chatHistoryNavItems.length > 0 || errorHistory)) && (
+        <Separator className="my-2 bg-border/60" />
+      )}
+
+      <div className="px-1 pt-1 pb-1 text-base font-semibold text-sidebar-foreground">
+        Chat History
+      </div>
+
+      <div className="flex-1 overflow-y-auto space-y-0.5 pr-1 custom-scrollbar">
+        {isLoadingHistory ? (
+          <div className="px-3 py-2 text-sm text-sidebar-foreground/70 text-center">
+            Loading history…
+          </div>
+        ) : errorHistory ? (
+          <div className="px-3 py-2 text-sm text-destructive text-center break-words">
+            Error: {errorHistory.substring(0, 150)}{errorHistory.length > 150 && "..."}
+            <Button variant="link" size="sm" onClick={refreshChatHistory} className="mt-1">
+              Try again
+            </Button>
+          </div>
+        ) : chatHistoryNavItems.length > 0 ? (
+          chatHistoryNavItems.map((item) => <NavItemDisplay key={item.id} item={item} />)
+        ) : (
+          <div className="px-3 py-2 text-xs text-sidebar-foreground/60 italic">
+            No chat history found.
+          </div>
+        )}
+      </div>
     </div>
   );
+}  --- app/components/Markdown.tsx ---
+import React, { useState } from "react";  
+import ReactMarkdown from "react-markdown";  
+import type { Components } from "react-markdown";  
+import remarkGfm from "remark-gfm";  
+import rehypeHighlight from "rehype-highlight";  
+import { FiCopy, FiCheck } from "react-icons/fi";  
+import "highlight.js/styles/atom-one-dark.css";  
+import type {  
+  Element as ProjectHastElement,  
+  ElementContent as ProjectHastElementContent,  
+} from "hast";  
+  
+// Utility to robustly extract text content (for copy)  
+const extractText = (nodes?: ProjectHastElementContent[]): string =>  
+  !nodes  
+    ? ""  
+    : nodes  
+        .map((node) => {  
+          if (node.type === "text") {  
+            return node.value || "";  
+          }  
+          if (node.type === "element" && node.children) {  
+            return extractText(node.children as ProjectHastElementContent[]);  
+          }  
+          return "";  
+        })  
+        .join("");  
+  
+// Props for the Markdown component  
+interface MarkdownProps {  
+  children: string;  
+  className?: string;  
+}  
+  
+// Define the props for the custom code component  
+type CustomCodeRendererProps = React.DetailedHTMLProps<  
+  React.HTMLAttributes<HTMLElement>,  
+  HTMLElement  
+> & {  
+  inline?: boolean;  
+  node?: ProjectHastElement;  
+};  
+  
+const CustomCodeRenderer: React.FC<CustomCodeRendererProps> = ({  
+  node,  
+  inline,  
+  className,  
+  children,  
+  ...props  
+}) => {  
+  const match = /language-(\w+)/.exec(className || "");  
+  const language = match ? match[1] : "plaintext";  
+  
+  const contentString = React.Children.toArray(children)  
+    .map((child) =>  
+      typeof child === "string" || typeof child === "number"  
+        ? child.toString()  
+        : ""  
+    )  
+    .join("");  
+  
+  const [copied, setCopied] = useState(false);  
+  
+  if (inline) {  
+    // Only <code> for inline code, no <figure>  
+    return (  
+      <code  
+        className="px-1 py-0.5 rounded bg-muted font-mono text-sm"  
+        {...props}  
+      >  
+        {children}  
+      </code>  
+    );  
+  }  
+  
+  // For code blocks: wrap in <figure> (correct usage)  
+  return (  
+    <figure className="relative rounded-lg overflow-hidden shadow-sm my-4 border border-border bg-card/50 dark:bg-zinc-900/50 w-full">  
+      {/* Code Header */}  
+      <figcaption className="bg-muted/70 dark:bg-zinc-800/70 text-muted-foreground py-1.5 px-4 font-mono text-xs flex items-center justify-between border-b border-border">  
+        <span className="uppercase tracking-wider">{language}</span>  
+        <button  
+          className="bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded px-2 py-0.5 text-xs flex items-center gap-1 border border-transparent hover:border-border"  
+          onClick={() => {  
+            navigator.clipboard  
+              .writeText(contentString.trim())  
+              .then(() => {  
+                setCopied(true);  
+                setTimeout(() => setCopied(false), 1500);  
+              })  
+              .catch((err) => console.error("Failed to copy:", err));  
+          }}  
+          type="button"  
+          aria-label="Copy code to clipboard"  
+        >  
+          {copied ? (  
+            <FiCheck size={14} className="text-green-500" />  
+          ) : (  
+            <FiCopy size={14} />  
+          )}  
+        </button>  
+      </figcaption>  
+      <pre  
+        className="p-4 text-sm font-mono text-foreground overflow-x-auto w-full"  
+        style={{  
+          margin: 0,  
+          tabSize: 2,  
+        }}  
+      >  
+        <code className={className || ""} {...props}>  
+          {children}  
+        </code>  
+      </pre>  
+    </figure>  
+  );  
+};  
+  
+// Custom markdown components overriding ReactMarkdown defaults  
+const markdownComponents: Components = {  
+  p: (props) => (  
+    <p  
+      className="my-3 leading-relaxed text-base w-full break-words"  
+      {...props}  
+    />  
+  ),  
+  code: CustomCodeRenderer, // main custom block handler  
+  
+  // removed `pre: ...` mapping (no longer needed!)  
+  
+  table: (props) => (  
+    <div className="my-4 overflow-x-auto border border-border rounded-md w-full">  
+      <table className="min-w-full divide-y divide-border" {...props} />  
+    </div>  
+  ),  
+  tr: (props) => (  
+    <tr  
+      className="hover:bg-muted/30 dark:hover:bg-zinc-700/30 transition-colors"  
+      {...props}  
+    />  
+  ),  
+  th: (props) => (  
+    <th  
+      className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider"  
+      {...props}  
+    />  
+  ),  
+  td: (props) => (  
+    <td  
+      className="px-4 py-2.5 text-sm text-foreground break-words"  
+      {...props}  
+    />  
+  ),  
+  img: (props) => (  
+    <img  
+      className="max-w-full h-auto rounded-md my-4"  
+      {...props}  
+      alt={props.alt || "Image"}  
+    />  
+  ),  
+  blockquote: (props) => (  
+    <blockquote  
+      className="border-l-4 border-muted pl-4 italic my-4 text-muted-foreground"  
+      {...props}  
+    />  
+  ),  
+  ul: (props) => <ul className="list-disc pl-6 my-4 space-y-2" {...props} />,  
+  ol: (props) => <ol className="list-decimal pl-6 my-4 space-y-2" {...props} />,  
+  li: (props) => <li className="mb-1" {...props} />,  
+  h1: (props) => <h1 className="text-2xl font-bold mt-6 mb-4" {...props} />,  
+  h2: (props) => <h2 className="text-xl font-bold mt-5 mb-3" {...props} />,  
+  h3: (props) => <h3 className="text-lg font-bold mt-4 mb-2" {...props} />,  
+  h4: (props) => <h4 className="text-base font-bold mt-3 mb-2" {...props} />,  
+  a: (props) => (  
+    <a  
+      className="text-primary underline hover:text-primary/80"  
+      target="_blank"  
+      rel="noopener noreferrer"  
+      {...props}  
+    />  
+  ),  
+};  
+  
+// Main Markdown Component  
+export function Markdown({ children, className }: MarkdownProps) {  
+  return (  
+    <div className={`w-full ${className || ""}`}>  
+      <ReactMarkdown  
+        remarkPlugins={[remarkGfm]}  
+        rehypePlugins={[rehypeHighlight]}  
+        components={markdownComponents}  
+        skipHtml={false}  
+      >  
+        {children}  
+      </ReactMarkdown>  
+    </div>  
+  );  
 }  --- app/components/sidebar-account.tsx ---
 // components/sidebar-account.tsx
 "use client";
@@ -1594,118 +1681,137 @@ export function MessageList({
       <div ref={scrollEndRef} style={{ height: '1px' }} />
     </div>
   );
-}--- app/components/chat/InitialPrompts.tsx ---
-interface InitialPromptsProps {
-  onPromptSelect: (prompt: string) => void;
+}--- app/components/chat/InitialGreeting.tsx ---
+// app/components/chat/InitialGreeting.tsx  
+import React from "react";  
+  
+export function InitialGreeting() {  
+  return (  
+<div className="flex flex-1 flex-col justify-center items-center min-h-0">  
+      <h1 className="text-3xl md:text-4xl font-semibold mb-2 text-neutral-900 dark:text-neutral-100 text-center">  
+        How can I help you today?  
+      </h1>  
+      <div className="h-1 w-24 bg-primary/40 rounded-full my-4" />  
+      <p className="text-neutral-500 dark:text-neutral-400 text-center">  
+        Start typing below or ask anything.  
+      </p>  
+    </div>  
+  );  
+}  --- app/components/chat/MessageItem.tsx ---
+// app/components/MessageItem.tsx
+import React, { useState, useRef } from "react";
+import { Markdown } from "../Markdown";
+import { Check, Copy, Loader, MessageCircle } from "lucide-react";
+
+export interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  isLoading?: boolean;
 }
 
-const suggestions = [
-  "What are the advantages of using Next.js?",
-  "Write code to demonstrate Dijkstra's algorithm",
-  "Help me write an essay about Silicon Valley",
-  "What is the weather in San Francisco?",
-];
+interface MessageItemProps {
+  message: Message;
+}
 
-export function InitialPrompts({ onPromptSelect }: InitialPromptsProps) {
+export function MessageItem({ message }: MessageItemProps) {
+  const isUser = message.role === "user";
+  const isAssistant = message.role === "assistant";
+  const contentBubbleRef = useRef<HTMLDivElement>(null);
+
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    if (contentBubbleRef.current) {
+      const textToCopy = message.content || "";
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      });
+    }
+  };
+
+  function AssistantIconRow() {
+    return (
+      <div className="flex items-center gap-3 mb-2 select-none">
+        <div className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 shadow text-indigo-700">
+          <MessageCircle className="w-6 h-6" />
+        </div>
+        <span className="italic text-base mr-2">Krivi AI</span>
+        {message.isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm">
+            <Loader className="w-5 h-5 animate-spin" />
+            <span>Assistant is typing...</span>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (isAssistant && message.isLoading && !message.content) {
+    return (
+      <div
+        id={`message-${message.id}`}
+        className="flex justify-start mb-4"
+        data-role={message.role}
+      >
+        <div className="flex flex-col items-start max-w-[100%]">
+          <AssistantIconRow />
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col items-center justify-center h-full p-4">
-      <h1 className="text-3xl font-semibold mb-2">Hello there!</h1>
-      <p className="text-muted-foreground mb-8">How can I help you today?</p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-xl">
-        {suggestions.map((prompt) => (
-          <button
-            key={prompt}
-            onClick={() => onPromptSelect(prompt)}
-            className="p-4 border rounded-lg hover:bg-muted text-left text-sm" // Basic styling
-          >
-            <p className="font-medium">{prompt.split(' ').slice(0, 5).join(' ')}{prompt.split(' ').length > 5 ? '...' : ''}</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {prompt.startsWith("Write code") ? "Code generation" : 
-               prompt.startsWith("Help me write") ? "Writing assistance" : 
-               "General query"}
-            </p>
-          </button>
-        ))}
+    <div
+      id={`message-${message.id}`}
+      className={`flex ${isUser ? "justify-end" : "justify-start"} mb-4`}
+      data-role={message.role}
+    >
+      <div
+        className={`max-w-[100%] flex flex-col ${isUser ? "items-end" : "items-start"}`}
+      >
+        {isAssistant && <AssistantIconRow />}
+        <div
+          ref={contentBubbleRef}
+          className={
+            isUser
+              ? "shadow rounded-lg px-3 py-2 bg-primary text-primary-foreground"
+              : "prose prose-sm text-foreground p-3"
+          }
+          style={{
+            maxWidth: "100%",
+            overflowWrap: "break-word",
+            overflowX: "auto",
+          }}
+        >
+          {message.content ? <Markdown>{message.content}</Markdown> : (isUser ? <span> </span> : null)}
+        </div>
+        {message.content && (
+          <div className={`flex mt-1 ${isUser ? "justify-end" : "justify-start"}`}>
+            <button
+              onClick={handleCopy}
+              className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted flex items-center gap-1 text-xs"
+              aria-label={copied ? "Copied!" : "Copy message"}
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3 h-3" />
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3" />
+                  <span>Copy</span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
-}--- app/components/chat/MessageItem.tsx ---
-// MessageItem.tsx  
-import React, { useState } from "react";  
-import { Markdown } from "../Markdown";  
-import { Check, Copy } from "lucide-react"; // Import Copy Icon  
-  
-export interface Message {  
-  id: string;  
-  role: "user" | "assistant";  
-  content: string;  
-  isLoading?: boolean;  
-}  
-  
-interface MessageItemProps {  
-  message: Message;  
-}  
-  
-export function MessageItem({ message }: MessageItemProps) {  
-  const isUser = message.role === "user";  
-  const messageRef = React.useRef<HTMLDivElement>(null);  
-    const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    if (messageRef.current) {
-      const textToCopy = message.content || "";
-      navigator.clipboard.writeText(textToCopy)
-        .then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-    }
-  }; 
-  
-  return (  
-  <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-4`}>  
-    <div  
-      className={`max-w-[100%] flex flex-col ${isUser ? "items-end" : "items-start"}`}  
-    >  
-      {/* Message Content */}  
-      <div  
-        ref={messageRef}  
-        className={`shadow rounded-lg p-3 ${  
-          isUser  
-            ? "bg-primary text-primary-foreground"  
-            : "prose prose-sm text-foreground"  
-        }`}  
-        style={{  
-          maxWidth: "100%",  
-          overflowWrap: "break-word",  
-          overflowX: "auto",  
-        }}  
-      >  
-        {(message.content || !message.isLoading) && <Markdown>{message.content}</Markdown>}  
-      </div>  
-      {/* Copy Button */}  
-      <div className={`flex mt-1 ${isUser ? "justify-end" : "justify-start"}`}>  
-        <button  
-          onClick={handleCopy}  
-          className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted flex items-center gap-1"  
-          aria-label={copied ? "Copied!" : "Copy message"}  
-        >  
-          {copied ? (  
-            <>  
-              <Check className="w-4 h-4" />  
-              <span className="text-xs">Copied!</span>  
-            </>  
-          ) : (  
-            <>  
-              <Copy className="w-4 h-4" />  
-              <span className="text-xs">Copy</span>  
-            </>  
-          )}  
-        </button>  
-      </div>  
-    </div>  
-  </div>  
-);  }--- app/components/chat/streaming-chat-context.tsx ---
+}--- app/components/chat/streaming-chat-context.tsx ---
 // app/components/chat/streaming-chat-context.tsx
 import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
 import type { Message } from '~/components/chat/MessageItem';
@@ -2016,20 +2122,18 @@ export const useStreamingChat = (): StreamingChatContextType => {
   }
   return context;
 };--- app/components/chat/ChatPageLayout.tsx ---
-// app/components/chat/ChatPageLayout.tsx
 import { useState, useEffect, useCallback, useRef, useTransition as useReactTransitionHook } from 'react';
 import { useNavigate, useLocation, useNavigation as useRemixNavigation, useParams } from '@remix-run/react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Message } from './MessageItem';
 import { MessageList } from './MessageList';
 import { ChatInputBar } from './ChatInputBar';
-import { InitialPrompts } from './InitialPrompts';
 import { AImodels, defaultModelConfig } from '~/lib/ai-models';
 import type { AIModelConfig } from '~/lib/ai-models';
-import { FourSquare } from 'react-loading-indicators';
 import { useScrollToBottom } from '~/hooks/useScrollToBottom';
 import { FiArrowDown } from 'react-icons/fi';
 import { useStreamingChat } from '~/components/chat/streaming-chat-context';
+import { InitialGreeting } from './InitialGreeting';
 
 type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';
 
@@ -2057,12 +2161,17 @@ export function ChatPageLayout({
   const [chatPhase, setChatPhase] = useState<ChatLoadingPhase>('INITIALIZING');
   // Add a local state to prevent multiple context clears during navigation
   const [hasInitialized, setHasInitialized] = useState(false);
+  // Add new state to track if we're in the new chat creation flow to prevent flickering
+  const [isNewChatTransitioning, setIsNewChatTransitioning] = useState(false);
 
   const {
     containerRef,
     endRef,
     showScrollDownButton,
     scrollToBottom,
+    scrollToPartialView,    // <-- add this!  
+    resetManualScrollFlag   // <-- add this!  
+
   } = useScrollToBottom(streamChat.messages);
 
   // Effect 1: Core logic to initialize or update chat context
@@ -2073,7 +2182,12 @@ export function ChatPageLayout({
     }
 
     const navState = location.state as { fromNewChatFlow?: boolean; initialMessages?: Message[] } | null;
-    console.log(`ChatPageLayout E1: urlChatId=${urlChatId}, initialChatIdFromLoader=${initialChatIdFromLoader}, contextUIFocus=${streamChat.currentUIFocusChatId}, contextActiveStream=${streamChat.activeStreamChatId}, navState=${JSON.stringify(navState)}, initialMessagesPropCt=${initialMessagesProp.length}`);
+
+    // Skip state changes if we're in the middle of new chat transition
+    // This prevents double flickering
+    if (isNewChatTransitioning && !urlChatId) {
+      return;
+    }
 
     setChatPhase('INITIALIZING');
 
@@ -2083,19 +2197,15 @@ export function ChatPageLayout({
       if (streamChat.activeStreamChatId === urlChatId &&
         streamChat.messages.length > 0 &&
         initialMessagesProp.length === 0) {
-        console.log(`ChatPageLayout E1: Using existing messages from context (Stream active for this ID, initialProp empty).`);
         messagesToUse = [...streamChat.messages]; // Use existing context messages
       }
       // Special handling for navigation from new chat flow
       if (navState?.fromNewChatFlow && streamChat.activeStreamChatId === urlChatId) {
-        console.log(`ChatPageLayout E1: Landed on ${urlChatId} from new chat flow. Context is active for this ID. Using context messages.`);
         messagesToUse = [...streamChat.messages]; // Use existing context (which might have streaming content)
       } else if (navState?.fromNewChatFlow && navState.initialMessages) {
-        console.log(`ChatPageLayout E1: Landed on ${urlChatId} from new chat flow. Context NOT active for this ID. Using navState messages.`);
         messagesToUse = navState.initialMessages;
       } else if (streamChat.currentUIFocusChatId !== urlChatId) {
         // Only clear and reset if we're switching to a different chat
-        console.log(`ChatPageLayout E1: Switching to chat ${urlChatId}. Previous focus: ${streamChat.currentUIFocusChatId}`);
         // Don't clear during an active stream
         if (!streamChat.isStreaming || streamChat.activeStreamChatId !== urlChatId) {
           streamChat.clearStreamState();
@@ -2112,27 +2222,24 @@ export function ChatPageLayout({
           const { fromNewChatFlow: _fNCF, initialMessages: _iM, ...newStateWithoutFlow } = (state as any) || {};
           navigate(restOfLocation, { replace: true, state: Object.keys(newStateWithoutFlow).length > 0 ? newStateWithoutFlow : undefined });
         });
+        // Reset the new chat transition flag since we've completed the transition
+        setIsNewChatTransitioning(false);
       }
       setChatPhase('PREPARING_CONTENT');
     }
     // Scenario 2: On a new chat page (urlChatId is null)
     else if (!urlChatId) {
-      console.log("ChatPageLayout E1: Initializing for new chat page (urlChatId is null).");
-
       // Only clear if we're coming from a different chat or if there's stale data
       if (streamChat.currentUIFocusChatId !== null ||
         (streamChat.messages.length > 0 && !streamChat.isStreaming)) {
-        console.log("ChatPageLayout E1: Clearing context for new chat page.");
         streamChat.clearStreamState();
-      } else {
-        console.log("ChatPageLayout E1: Context seems aligned for new/unnamed chat or is pristine. Not clearing.");
       }
       setChatPhase('READY');
     }
 
     setHasInitialized(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlChatId, initialMessagesProp, location.pathname]);
+  }, [urlChatId, initialMessagesProp, location.pathname, isNewChatTransitioning]);
 
   // Reset initialization flag when URL changes
   useEffect(() => {
@@ -2144,7 +2251,6 @@ export function ChatPageLayout({
   // Effect 2: Handle PREPARING_CONTENT phase
   useEffect(() => {
     if (chatPhase === 'PREPARING_CONTENT' && streamChat.currentUIFocusChatId === urlChatId && urlChatId) {
-      console.log(`ChatPageLayout E2: PREPARING_CONTENT for ${urlChatId} -> READY. Scrolling history.`);
       startReactTransition(() => {
         setChatPhase('READY');
         const navState = location.state as { fromNewChatFlow?: boolean } | null;
@@ -2159,7 +2265,6 @@ export function ChatPageLayout({
     async (inputTextValue: string, modelConfig: AIModelConfig) => {
       const trimmedInput = inputTextValue.trim();
       if (!trimmedInput || streamChat.isStreaming || isReactTransitionPending || chatPhase !== 'READY') {
-        console.warn("ChatPageLayout: Send message aborted.", { isStreaming: streamChat.isStreaming, isReactTransitionPending, chatPhase });
         return;
       }
       setInput('');
@@ -2168,53 +2273,58 @@ export function ChatPageLayout({
         id: crypto.randomUUID(),
         role: 'user',
         content: trimmedInput,
-        timestamp: Date.now()
       };
 
       if (!urlChatId) { // Current page is a "new chat" page
         const newChatId = uuidv4();
-        console.log(`ChatPageLayout: New chat. Generated ID: ${newChatId}. Updating context, navigating, then streaming.`);
 
         try {
+          // Set flag to prevent flickering during the new chat transition
+          setIsNewChatTransitioning(true);
+
           // 1. Set context for the new chat ID with ONLY the user message
-          //    This prepares the context before navigation and stream start.
+          // This keeps the message visible during transition
           streamChat.setMessagesForContext([userMessage], newChatId);
 
-          // 2. Navigate to the new chat's URL
-          const destinationPath = `/chat/${newChatId}`;
-
-          // 3. Start the stream BEFORE navigation completes
+          // 2. Start the stream BEFORE navigation completes
           // This ensures stream initialization isn't disrupted by navigation
           const streamPromise = streamChat.startStream(trimmedInput, modelConfig, newChatId);
 
-          // 4. Navigate to new chat path
-          startReactTransition(() => {
-            navigate(destinationPath, {
-              replace: true,
-              state: { initialMessages: [userMessage], fromNewChatFlow: true },
+          // 3. Navigate to new chat path with minimal visual transition
+          // Short delay to allow the UI to stabilize with user message
+          setTimeout(() => {
+            const destinationPath = `/chat/${newChatId}`;
+            startReactTransition(() => {
+              navigate(destinationPath, {
+                replace: true,
+                state: { initialMessages: [userMessage], fromNewChatFlow: true },
+              });
             });
-          });
 
-          // 5. Await stream completion (in the background)
+          }, 50);
+
+          // 4. Await stream completion (in the background)
           await streamPromise;
         } catch (error) {
           console.error("Error in new chat flow:", error);
-          // Handle error (could add error state to UI here)
+          setIsNewChatTransitioning(false); // Reset flag in case of error
         }
       } else { // Current page is an existing chat
-        console.log(`ChatPageLayout: Existing chat ${urlChatId}. Sending message.`);
         try {
           // Add user message to existing messages in context
           streamChat.setMessagesForContext([...streamChat.messages, userMessage], urlChatId);
           await streamChat.startStream(trimmedInput, modelConfig, urlChatId);
         } catch (error) {
           console.error("Error in existing chat flow:", error);
-          // Handle error (could add error state to UI here)
         }
       }
     },
     [streamChat, urlChatId, isReactTransitionPending, chatPhase, navigate, startReactTransition]
   );
+
+  useEffect(() => {  
+  resetManualScrollFlag();  
+}, [urlChatId, resetManualScrollFlag]);  
 
   const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -2231,59 +2341,44 @@ export function ChatPageLayout({
   };
 
   const isRemixNavigating = remixNavigation.state !== 'idle';
-  const showPageLoader = chatPhase !== 'READY' || isRemixNavigating || isReactTransitionPending;
-
-  const displayInitialPrompts =
-    !urlChatId &&
-    streamChat.messages.length === 0 &&
-    !streamChat.isStreaming &&
-    !input &&
-    chatPhase === 'READY';
-
-  const showMessageAreaContent = chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending;
+  // Modify the content ready check to account for new chat transitions
+  const isContentReady = (chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending) ||
+    (isNewChatTransitioning && streamChat.messages.length > 0);
 
   const childKey = urlChatId || "new-chat-page-active";
 
   return (
     <div className="flex flex-col h-full w-full">
       <div ref={containerRef} className="flex-grow overflow-y-auto overflow-x-hidden relative">
-        {showPageLoader && (
-          <div className="absolute inset-0 flex flex-col justify-center items-center bg-background/80 backdrop-blur-sm z-20 p-4 text-center">
-            <FourSquare color="hsl(var(--primary))" size="medium" />
-            <p className="mt-4 text-sm text-foreground">
-              {isRemixNavigating ? "Navigating..."
-                : isReactTransitionPending ? "Processing..."
-                  : chatPhase === 'INITIALIZING' ? "Initializing chat..."
-                    : chatPhase === 'PREPARING_CONTENT' ? "Loading messages..."
-                      : "Loading..."}
-            </p>
-            {streamChat.streamError && <p className="mt-2 text-destructive text-xs">Error: {streamChat.streamError}</p>}
-          </div>
-        )}
+        {/* No visible loading indicators */}
+
         <div
           style={{
-            opacity: showMessageAreaContent ? 1 : 0,
-            pointerEvents: showMessageAreaContent ? 'auto' : 'none',
+            opacity: isContentReady ? 1 : 0,
             transition: 'opacity 0.2s ease-in-out',
-            minHeight: '100%', display: 'flex', flexDirection: 'column',
+            minHeight: '100%',
+            display: 'flex',
+            flexDirection: 'column',
           }}
           className="w-full"
         >
-          {displayInitialPrompts ? (
-            <div className="max-w-5xl mx-auto w-full h-full flex flex-col justify-center items-center p-4 flex-grow">
-              <InitialPrompts onPromptSelect={handlePromptSelect} />
-            </div>
-          ) : (
-            <div className="max-w-4xl mx-auto w-full flex-grow flex flex-col">
+          <div className="max-w-4xl mx-auto w-full flex-grow flex flex-col">
+            {streamChat.messages.length === 0 ? (
+              <InitialGreeting />
+            ) : (
               <MessageList
                 key={`ml-${childKey}`}
                 messages={streamChat.messages}
-                isLoading={streamChat.isStreaming && streamChat.messages[streamChat.messages.length - 1]?.role === 'assistant' && streamChat.messages[streamChat.messages.length - 1]?.isLoading === true}
-                isInitialHistoryLoading={chatPhase === 'PREPARING_CONTENT'}
+                isLoading={
+                  streamChat.isStreaming &&
+                  streamChat.messages[streamChat.messages.length - 1]?.role === "assistant" &&
+                  streamChat.messages[streamChat.messages.length - 1]?.isLoading === true
+                }
+                isInitialHistoryLoading={false} // Never show history loading
                 scrollEndRef={endRef}
               />
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {showScrollDownButton && (
@@ -2324,7 +2419,12 @@ export function ChatPageLayout({
       </div>
     </div>
   );
-}--- app/components/chat/ChatPageLayout copy.tsx ---
+}
+
+function refreshChatHistory() {
+  throw new Error('Function not implemented.');
+}
+--- app/components/chat/ChatPageLayout copy.tsx ---
 // app/components/ChatPageLayout.tsx (or wherever your ChatPageLayout is)
 import { useState, useEffect, useCallback, useRef, useTransition } from 'react';
 // If you want Remix's useTransition, use:
@@ -2333,7 +2433,7 @@ import { useNavigate, useLocation } from '@remix-run/react';
 import type { Message } from './MessageItem'; // Adjust path if necessary
 import { MessageList } from './MessageList'; // Adjust path if necessary
 import { ChatInputBar } from './ChatInputBar'; // Adjust path if necessary
-import { InitialPrompts } from './InitialPrompts'; // Adjust path if necessary
+import { InitialPrompts } from './InitialGreeting'; // Adjust path if necessary
 import {
   AImodels,
   defaultModelConfig,
@@ -2702,7 +2802,32 @@ export function SidebarHeader({
       </Button>
     </div>
   );
-}--- app/components/app-sidebar.tsx ---
+}--- app/components/sidebar-chat-history-context.tsx ---
+import * as React from 'react';  
+  
+interface SidebarChatHistoryContextType {  
+  refreshChatHistory: () => void;  
+  lastRefreshTimestamp: number;  
+}  
+  
+const SidebarChatHistoryContext = React.createContext<SidebarChatHistoryContextType>({  
+  refreshChatHistory: () => {},  
+  lastRefreshTimestamp: 0,  
+});  
+  
+export function SidebarChatHistoryProvider({ children }: { children: React.ReactNode }) {  
+  const [lastRefreshTimestamp, setLastRefreshTimestamp] = React.useState(Date.now());  
+  const refreshChatHistory = React.useCallback(() => setLastRefreshTimestamp(Date.now()), []);  
+  return (  
+    <SidebarChatHistoryContext.Provider value={{ refreshChatHistory, lastRefreshTimestamp }}>  
+      {children}  
+    </SidebarChatHistoryContext.Provider>  
+  );  
+}  
+  
+export function useSidebarChatHistory() {  
+  return React.useContext(SidebarChatHistoryContext);  
+}  --- app/components/app-sidebar.tsx ---
 // components/app-sidebar.tsx
 "use client";
 

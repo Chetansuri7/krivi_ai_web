@@ -2182,6 +2182,16 @@ export const AImodels: AIModelConfig[] = [
     displayName: "Gemini 2.0 flash", // Updated display name to match model version (optional, adjust as needed)
     model: "gemini-2.0-flash", // From your example payload
     provider: "google",
+  },
+  {
+    displayName: "llama3.1-8b", // Updated display name to match model version (optional, adjust as needed)
+    model: "llama3.1-8b", // From your example payload
+    provider: "cerebras",
+  },
+  {
+    displayName: "qwen-3-32b", // Updated display name to match model version (optional, adjust as needed)
+    model: "qwen-3-32b", // From your example payload
+    provider: "cerebras",
   }
   // Add more models here as needed
 ];

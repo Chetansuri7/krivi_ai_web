@@ -10,6 +10,9 @@ import { useScrollToBottom } from '~/hooks/useScrollToBottom';
 import { FiArrowDown } from 'react-icons/fi';
 import { useStreamingChat } from '~/components/chat/streaming-chat-context';
 import { InitialGreeting } from './InitialGreeting';
+import { useSidebarChatHistory } from '~/components/sidebar-chat-history-context';
+
+
 
 type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';
 
@@ -176,6 +179,7 @@ export function ChatPageLayout({
                 state: { initialMessages: [userMessage], fromNewChatFlow: true },
               });
             });
+
           }, 50);
 
           // 4. Await stream completion (in the background)
@@ -197,9 +201,24 @@ export function ChatPageLayout({
     [streamChat, urlChatId, isReactTransitionPending, chatPhase, navigate, startReactTransition]
   );
 
-  useEffect(() => {  
-  resetManualScrollFlag();  
-}, [urlChatId, resetManualScrollFlag]);  
+  useEffect(() => {
+    resetManualScrollFlag();
+  }, [urlChatId, resetManualScrollFlag]);
+  // --- Add this effect BELOW the resetManualScrollFlag effect ---  
+  const { refreshChatHistory } = useSidebarChatHistory();
+  const prevChatIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    // Trigger refresh ONLY when new chat created and navigated to /chat/:id  
+    if (
+      prevChatIdRef.current === null && // was on new chat page  
+      initialChatIdFromLoader !== null  // now on a chat with an id  
+    ) {
+      refreshChatHistory();
+    }
+    prevChatIdRef.current = initialChatIdFromLoader;
+  }, [initialChatIdFromLoader, refreshChatHistory]);
+  // --- End new effect --- 
 
   const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();

@@ -33,10 +33,10 @@ interface SidebarNavProps {
 }
 
 interface ApiChatSession {
-  chatId: string;
-  title: string;
-  createdAt: string;
-  lastMessageAt: string;
+  ChatId: string;
+  Title: string;
+  CreatedAt: string;
+  LastMessageAt: string;
 }
 
 // --- Utility ---  
@@ -65,10 +65,10 @@ const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[]
     prev7Days: [],
     prev30Days: [],
   };
-  chatSessions.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
+  chatSessions.sort((a, b) => new Date(b.LastMessageAt).getTime() - new Date(a.LastMessageAt).getTime());
 
   chatSessions.forEach(session => {
-    const sessionDate = new Date(session.lastMessageAt);
+    const sessionDate = new Date(session.LastMessageAt);
     if (sessionDate >= todayStart)
       sections.today.push(session);
     else if (sessionDate >= yesterdayStart)
@@ -80,9 +80,9 @@ const processChatHistoryToNavItems = (chatSessions: ApiChatSession[]): NavItem[]
   });
 
   const createChatNavItem = (session: ApiChatSession): NavItem => ({
-    id: `chat-${session.chatId}`,
-    title: session.title.length > 30 ? session.title.substring(0, 27) + "..." : session.title,
-    href: `/chat/${session.chatId}`,
+    id: `chat-${session.ChatId}`,
+    title: session.Title.length > 30 ? session.Title.substring(0, 27) + "..." : session.Title,
+    href: `/chat/${session.ChatId}`,
   });
 
   if (sections.today.length > 0) {
