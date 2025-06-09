@@ -2,7 +2,10 @@
 "use client";
 
 import * as React from "react";
-import { LogOut, Settings2, User2, ChevronsUpDown } from "lucide-react"; // Removed Palette for now
+import { useEffect, useState } from "react";
+import { LogOut, Settings2, User2, ChevronsUpDown } from "lucide-react";
+import Cookies from "js-cookie";
+import { useNavigate } from "@remix-run/react";
 import {
   Popover,
   PopoverContent,
@@ -12,7 +15,7 @@ import { Button } from "~/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar";
 import { Separator } from "~/components/ui/separator";
 import { cn } from "~/lib/utils";
-// import { useTheme } from "next-themes"; // For theme switching, if implemented
+import { getApiUrl } from "~/lib/api.config";
 
 interface User {
   name: string;
@@ -20,13 +23,39 @@ interface User {
   avatar: string; // URL to avatar image
 }
 
-interface SidebarAccountProps {
-  user: User;
-  onLogout?: () => void; // Optional: For handling logout action
-}
+// interface SidebarAccountProps {
+//   user: User; // User prop removed, will be fetched from cookies
+//   onLogout?: () => void; // Optional: For handling logout action - will be handled internally
+// }
 
-export function SidebarAccount({ user, onLogout }: SidebarAccountProps) {
-  // const { theme, setTheme } = useTheme();
+export function SidebarAccount(/*{ user, onLogout }: SidebarAccountProps*/) {
+  const [user, setUser] = useState<User | null>(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const email = Cookies.get("kwikon_ui_email") || "";
+    const displayName = Cookies.get("kwikon_ui_displayname");
+    const firstName = Cookies.get("kwikon_ui_firstname");
+    const lastName = Cookies.get("kwikon_ui_lastname");
+    const profilePictureUrl = Cookies.get("kwikon_ui_profilepictureurl") || "";
+
+    let name = "User";
+    if (displayName) {
+      name = displayName;
+    } else if (firstName && lastName) {
+      name = `${firstName} ${lastName}`;
+    } else if (firstName) {
+      name = firstName;
+    }
+
+    if (email) {
+      setUser({
+        name,
+        email,
+        avatar: profilePictureUrl,
+      });
+    }
+  }, []);
 
   const getInitials = (name: string) => {
     if (!name) return "";
@@ -38,19 +67,41 @@ export function SidebarAccount({ user, onLogout }: SidebarAccountProps) {
   };
 
   const handleLogout = async () => {
-    if (onLogout) {
-        onLogout();
-    } else {
-        // Default logout: redirect to backend logout endpoint which should clear cookies
-        // This URL needs to come from api.config.ts
-        // For now, a placeholder:
-        // window.location.href = getApiUrl("AUTH_LOGOUT");
-        // Or use Remix Form for a POST request if logout is an action
-        console.log("Logout action - implement using Remix form or direct navigation to logout endpoint");
-        window.location.href = "/auth/logout"; // Placeholder, use getApiUrl
+    try {
+      const logoutUrl = getApiUrl("AUTH_LOGOUT");
+      await fetch(logoutUrl, {
+        method: "POST",
+        credentials: "include", // Important to send cookies
+      });
+    } catch (error) {
+      console.error("Logout API call failed:", error);
+      // Proceed with client-side cleanup even if API call fails
+    } finally {
+      // Clear all relevant cookies
+      const cookieNames = [
+        "kwikon_at",
+        "kwikon_rt",
+        "kwikon_ui_email",
+        "kwikon_ui_displayname",
+        "kwikon_ui_firstname",
+        "kwikon_ui_lastname",
+        "kwikon_ui_profilepictureurl",
+      ];
+      cookieNames.forEach((cookieName) => {
+        Cookies.remove(cookieName, { path: "/" }); // Ensure path is correct if cookies were set with a specific path
+      });
+      // Redirect to login page
+      navigate("/login");
     }
   };
 
+  if (!user) {
+    // Optionally, render a loading state or nothing if user data isn't available
+    // For now, if no user (e.g. no email cookie), don't render the component
+    // Or redirect to login if preferred:
+    // useEffect(() => { if (!user) navigate("/login"); }, [user, navigate]);
+    return null;
+  }
 
   return (
     <div className="w-full p-3">
@@ -107,8 +158,6 @@ export function SidebarAccount({ user, onLogout }: SidebarAccountProps) {
               <Settings2 className="size-4 text-muted-foreground" /> Settings
             </Button>
             <Separator className="my-1 bg-border" />
-            {/* For Logout, it's better to use a Remix <Form method="post" action="/logout"> or similar */}
-            {/* Or a link to a backend endpoint that clears HttpOnly cookies */}
             <Button
               variant="ghost"
               onClick={handleLogout}

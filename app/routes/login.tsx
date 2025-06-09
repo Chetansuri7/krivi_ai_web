@@ -66,32 +66,29 @@ export default function LoginPage() {
     ? `${googleLoginUrl}?final_redirect_path=${encodeURIComponent(nextParam)}`  
     : googleLoginUrl;  
   
-  // User-friendly error translation  
-  const ERROR_MESSAGES: Record<string, string | undefined> = {  
-    session_terminated: "Your session has been terminated. Please sign in again.",  
-    invalid_or_expired_tokens: "Your session is invalid or has expired. Please sign in again.",  
-    auth_check_failed: "Something went wrong. Please try signing in again.",  
-    // add other codes as needed  
-  };  
-  
-  let displayMessage = searchParams.get("message");  
-  let errorReason = searchParams.get("error_description") || searchParams.get("error");  
-  
-  if (!displayMessage && !errorReason && authStatus) {  
-    if (authStatus.status === "login_required") {  
-      errorReason = ERROR_MESSAGES[authStatus.reason] ?? "";  
-    } else if (authStatus.status === "error") {  
-      errorReason = ERROR_MESSAGES[authStatus.reason ?? ""] ?? "Something went wrong. Please try signing in again.";  
-    }  
-  }  
-  
-  // Never show technical/unknown or empty codes to user  
-  if (  
-    !errorReason ||  
-    ["no_tokens_present", "auth_check_failed", "error", "login_required"].includes(errorReason)  
-  ) {  
-    errorReason = "";  
-  }  
+  // Define only the errors we want to show to the user for login-specific issues
+  const LOGIN_SPECIFIC_ERROR_MESSAGES: Record<string, string> = {
+    session_terminated: "Your session has been terminated. Please sign in again.",
+    invalid_or_expired_tokens: "Your session is invalid or has expired. Please sign in again.",
+    // Add any other specific login-related errors that should be user-visible here.
+    // For example, if your backend can return "invalid_credentials":
+    // "invalid_credentials": "The username or password you entered is incorrect.",
+  };
+
+  const displayMessage = searchParams.get("message"); // For general messages, not errors
+  let determinedErrorKey: string | null | undefined = searchParams.get("error_description") || searchParams.get("error");
+
+  // If no error key from URL params, try to get it from authStatus
+  if (!determinedErrorKey && authStatus) {
+    // Only consider 'login_required' or 'error' statuses for deriving an error key from authStatus.reason
+    if (authStatus.status === "login_required" || authStatus.status === "error") {
+      determinedErrorKey = authStatus.reason; // authStatus.reason might be undefined or a non-displayable code
+    }
+  }
+
+  // Map the determinedErrorKey to a user-friendly message if it's a known login-specific error
+  // Otherwise, errorReason will be an empty string, suppressing generic/unknown errors.
+  const errorReason = determinedErrorKey ? (LOGIN_SPECIFIC_ERROR_MESSAGES[determinedErrorKey] ?? "") : "";
   
   return (  
     <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">  
