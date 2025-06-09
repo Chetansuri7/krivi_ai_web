@@ -1,65 +1,40 @@
 // app/components/chat/ChatPageLayout.tsx  
-import { useState, useEffect, useCallback, useRef, useTransition as useReactTransitionHook } from 'react';  
+import React, { useState, useRef, useTransition as useReactTransitionHook, useEffect } from 'react';  
 import { useNavigate, useLocation, useNavigation as useRemixNavigation, useParams } from '@remix-run/react';  
-import { v4 as uuidv4 } from 'uuid';  
-import type { Message } from './MessageItem';  
-import { MessageList } from './MessageList';  
-import { ChatInputBar } from './ChatInputBar';  
 import { AImodels, defaultModelConfig } from '~/lib/ai-models';  
-import type { AIModelConfig } from '~/lib/ai-models';  
 import { useScrollToBottom } from '~/hooks/useScrollToBottom';  
 import { FiArrowDown } from 'react-icons/fi';  
 import { useStreamingChat } from '~/components/chat/streaming-chat-context';  
 import { InitialGreeting } from './InitialGreeting';  
 import { useSidebarChatHistory } from '~/components/sidebar-chat-history-context';  
+import { MessageList } from './MessageList';  
+import { ChatInputBar } from './ChatInputBar';  
   
-type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';  
+import { usePerChatModelSelection } from '~/hooks/usePerChatModelSelection';  
+import { useChatSessionMessages } from '~/hooks/useChatSessionMessages';  
+import { useSidebarHistoryRefreshOnChatChange } from '~/hooks/useSidebarHistoryRefreshOnChatChange';  
+import { useChatSendMessage } from '~/hooks/useChatSendMessage';  
   
-interface ChatPageLayoutProps {  
+type ChatPageLayoutProps = {  
   initialChatIdFromLoader: string | null;  
-  initialMessagesProp: Message[];  
-}  
+  initialMessagesProp: any[];  
+};  
   
-export function ChatPageLayout({  
-  initialChatIdFromLoader,  
-  initialMessagesProp,  
-}: ChatPageLayoutProps) {  
+export function ChatPageLayout({ initialChatIdFromLoader, initialMessagesProp }: ChatPageLayoutProps) {  
   const navigate = useNavigate();  
   const location = useLocation();  
   const params = useParams();  
   const urlChatId = params.chatId || null;  
-  
   const remixNavigation = useRemixNavigation();  
   const [isReactTransitionPending, startReactTransition] = useReactTransitionHook();  
-  
   const streamChat = useStreamingChat();  
   
   const [input, setInput] = useState('');  
-  // ------------ BEGIN: Model selection state (now per chat) --------------  
-  // Use a ref to remember last selected model per-chat during this browser session  
-  const lastSelectedModelMapRef = useRef<{ [chatKey: string]: AIModelConfig }>({});  
-  // Use urlChatId (or "new-chat" for new) as the key  
-  const chatModelKey = urlChatId || 'new-chat';  
-  // Local selected model state (for controlled input dropdown)  
-  const [selectedModel, setSelectedModel] = useState<AIModelConfig>(defaultModelConfig);  
-  
-  // When chat changes, restore last used model (or default)  
-  useEffect(() => {  
-    const last = lastSelectedModelMapRef.current[chatModelKey];  
-    setSelectedModel(last ?? defaultModelConfig);  
-  }, [chatModelKey]);  
-  
-  // Store the model in the ref on change  
-  const handleModelChange = (model: AIModelConfig) => {  
-    setSelectedModel(model);  
-    lastSelectedModelMapRef.current[chatModelKey] = model;  
-  };  
-  // ------------ END: Model selection state (per chat) --------------------  
-  
-  const [chatPhase, setChatPhase] = useState<ChatLoadingPhase>('INITIALIZING');  
-  const [hasInitialized, setHasInitialized] = useState(false);  
   const [isNewChatTransitioning, setIsNewChatTransitioning] = useState(false);  
   
+  const chatModelKey = urlChatId || 'new-chat';  
+  
+  // -- get scroll hook FIRST so scrollToBottom variable is ready before calling other hooks  
   const {  
     containerRef,  
     endRef,  
@@ -69,158 +44,45 @@ export function ChatPageLayout({
     resetManualScrollFlag  
   } = useScrollToBottom(streamChat.messages);  
   
-  // Effect: Core logic to initialize or update chat context/messages  
-  useEffect(() => {  
-    if (hasInitialized && remixNavigation.state !== 'idle') {  
-      // Don't re-initialize during navigation transitions  
-      return;  
-    }  
+  const { selectedModel, handleModelChange } = usePerChatModelSelection(chatModelKey, defaultModelConfig);  
   
-    const navState = location.state as { fromNewChatFlow?: boolean; initialMessages?: Message[] } | null;  
+  const { chatPhase, setChatPhase } = useChatSessionMessages({  
+    urlChatId,  
+    initialMessagesProp,  
+    streamChat,  
+    location,  
+    remixNavigation,  
+    navigate,  
+    startReactTransition,  
+    isNewChatTransitioning,  
+    setIsNewChatTransitioning,  
+    scrollToBottom,  
+  });  
   
-    if (isNewChatTransitioning && !urlChatId) {  
-      return;  
-    }  
+  const lastSelectedModelMapRef = useRef<{ [key: string]: any }>({});  
   
-    setChatPhase('INITIALIZING');  
+  const handleSendMessage = useChatSendMessage({  
+    streamChat,  
+    urlChatId,  
+    lastSelectedModelMapRef,  
+    isReactTransitionPending,  
+    chatPhase,  
+    navigate,  
+    startReactTransition,  
+    setInput,  
+    setIsNewChatTransitioning,  
+    chatModelKey,  
+  });  
   
-    // Case 1: Landed on specific chatId  
-    if (urlChatId) {  
-      let messagesToUse: Message[] = initialMessagesProp;  
-      if (  
-        streamChat.activeStreamChatId === urlChatId &&  
-        streamChat.messages.length > 0 &&  
-        initialMessagesProp.length === 0  
-      ) {  
-        messagesToUse = [...streamChat.messages]; // Use existing context messages  
-      }  
-      if (navState?.fromNewChatFlow && streamChat.activeStreamChatId === urlChatId) {  
-        messagesToUse = [...streamChat.messages];  
-      } else if (navState?.fromNewChatFlow && navState.initialMessages) {  
-        messagesToUse = navState.initialMessages;  
-      } else if (streamChat.currentUIFocusChatId !== urlChatId) {  
-        if (!streamChat.isStreaming || streamChat.activeStreamChatId !== urlChatId) {  
-          streamChat.clearStreamState();  
-        }  
-      }  
-      streamChat.setMessagesForContext(messagesToUse, urlChatId);  
-  
-      if (navState?.fromNewChatFlow) {  
-        startReactTransition(() => {  
-          const { state, ...restOfLocation } = location;  
-          const { fromNewChatFlow: _fNCF, initialMessages: _iM, ...newStateWithoutFlow } = (state as any) || {};  
-          navigate(restOfLocation, {  
-            replace: true,  
-            state: Object.keys(newStateWithoutFlow).length > 0 ? newStateWithoutFlow : undefined,  
-          });  
-        });  
-        setIsNewChatTransitioning(false);  
-      }  
-      setChatPhase('PREPARING_CONTENT');  
-    }  
-    // Case 2: New chat page  
-    else if (!urlChatId) {  
-      if (  
-        streamChat.currentUIFocusChatId !== null ||  
-        (streamChat.messages.length > 0 && !streamChat.isStreaming)  
-      ) {  
-        streamChat.clearStreamState();  
-      }  
-      setChatPhase('READY');  
-    }  
-    setHasInitialized(true);  
-    // eslint-disable-next-line react-hooks/exhaustive-deps  
-  }, [urlChatId, initialMessagesProp, location.pathname, isNewChatTransitioning]);  
-  
-  useEffect(() => {  
-    return () => {  
-      setHasInitialized(false);  
-    };  
-  }, [location.pathname]);  
-  
-  // Handle phase change READY for scrolling  
-  useEffect(() => {  
-    if (  
-      chatPhase === 'PREPARING_CONTENT' &&  
-      streamChat.currentUIFocusChatId === urlChatId &&  
-      urlChatId  
-    ) {  
-      startReactTransition(() => {  
-        setChatPhase('READY');  
-        const navState = location.state as { fromNewChatFlow?: boolean } | null;  
-        if (!navState?.fromNewChatFlow) {  
-          requestAnimationFrame(() => scrollToBottom('auto'));  
-        }  
-      });  
-    }  
-  }, [chatPhase, urlChatId, streamChat.currentUIFocusChatId, scrollToBottom, location.state, startReactTransition]);  
-  
-  const handleSendMessage = useCallback(  
-    async (inputTextValue: string, modelConfig: AIModelConfig) => {  
-      const trimmedInput = inputTextValue.trim();  
-      if (!trimmedInput || streamChat.isStreaming || isReactTransitionPending || chatPhase !== 'READY') {  
-        return;  
-      }  
-      setInput('');  
-      // Remember the model selection for this chat (could also be done inside handleModelChange)  
-      lastSelectedModelMapRef.current[chatModelKey] = modelConfig;  
-  
-      const userMessage: Message = {  
-        id: crypto.randomUUID(),  
-        role: 'user',  
-        content: trimmedInput,  
-      };  
-  
-      if (!urlChatId) {  
-        const newChatId = uuidv4();  
-        try {  
-          setIsNewChatTransitioning(true);  
-          streamChat.setMessagesForContext([userMessage], newChatId);  
-          const streamPromise = streamChat.startStream(trimmedInput, modelConfig, newChatId);  
-          setTimeout(() => {  
-            const destinationPath = `/chat/${newChatId}`;  
-            startReactTransition(() => {  
-              navigate(destinationPath, {  
-                replace: true,  
-                state: { initialMessages: [userMessage], fromNewChatFlow: true },  
-              });  
-            });  
-          }, 50);  
-          await streamPromise;  
-        } catch (error) {  
-          console.error('Error in new chat flow:', error);  
-          setIsNewChatTransitioning(false);  
-        }  
-      } else {  
-        try {  
-          streamChat.setMessagesForContext([...streamChat.messages, userMessage], urlChatId);  
-          await streamChat.startStream(trimmedInput, modelConfig, urlChatId);  
-        } catch (error) {  
-          console.error('Error in existing chat flow:', error);  
-        }  
-      }  
-    },  
-    [streamChat, urlChatId, isReactTransitionPending, chatPhase, navigate, startReactTransition, chatModelKey]  
-  );  
+  // For sidebar history  
+  const { refreshChatHistory } = useSidebarChatHistory();  
+  useSidebarHistoryRefreshOnChatChange(initialChatIdFromLoader, refreshChatHistory);  
   
   useEffect(() => {  
     resetManualScrollFlag();  
   }, [urlChatId, resetManualScrollFlag]);  
   
-  // For refreshing sidebar history on new chat  
-  const { refreshChatHistory } = useSidebarChatHistory();  
-  const prevChatIdRef = useRef<string | null>(null);  
-  useEffect(() => {  
-    if (  
-      prevChatIdRef.current === null && // previously on new chat  
-      initialChatIdFromLoader !== null // now on an actual chat  
-    ) {  
-      refreshChatHistory();  
-    }  
-    prevChatIdRef.current = initialChatIdFromLoader;  
-  }, [initialChatIdFromLoader, refreshChatHistory]);  
-  
-  // Wire form submit and prompt select  
+  // UI event handlers  
   const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {  
     e.preventDefault();  
     if (  
@@ -232,6 +94,7 @@ export function ChatPageLayout({
       handleSendMessage(input, selectedModel);  
     }  
   };  
+  
   const handlePromptSelect = (promptText: string) => {  
     if (chatPhase === 'READY' && !streamChat.isStreaming && !isReactTransitionPending) {  
       setInput(promptText);  
@@ -240,11 +103,9 @@ export function ChatPageLayout({
   };  
   
   const isRemixNavigating = remixNavigation.state !== 'idle';  
-  
   const isContentReady =  
     (chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending) ||  
     (isNewChatTransitioning && streamChat.messages.length > 0);  
-  
   const childKey = urlChatId || 'new-chat-page-active';  
   
   return (  

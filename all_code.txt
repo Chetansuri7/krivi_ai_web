@@ -72,43 +72,71 @@ export interface AIModelConfig {
   isDefault?: boolean; // Optional: useful for selecting default
 }
 
-export const AImodels: AIModelConfig[] = [
-  {
-    displayName: "GPT-4o Mini",
-    model: "gpt-4o-mini",
-    provider: "azure",
-    isDefault: true, // Marking this as default as per your previous defaultModelConfig
+// Import models from their respective files
+import { azureModels } from './model-list/azure-models';
+import { cerebrasModels } from './model-list/cerebras-models';
+import { googleModels } from './model-list/google-models';
 
-  },
-  {
-    displayName: "Gemini 2.5 flash", // Updated display name to match model version (optional, adjust as needed)
-    model: "gemini-2.5-flash-preview-04-17", // From your example payload
-    provider: "google",
-  },
-  {
-    displayName: "Gemini 2.0 flash", // Updated display name to match model version (optional, adjust as needed)
-    model: "gemini-2.0-flash", // From your example payload
-    provider: "google",
-  },
-  {
-    displayName: "llama3.1-8b", // Updated display name to match model version (optional, adjust as needed)
-    model: "llama3.1-8b", // From your example payload
-    provider: "cerebras",
-  },
-  {
-    displayName: "qwen-3-32b", // Updated display name to match model version (optional, adjust as needed)
-    model: "qwen-3-32b", // From your example payload
-    provider: "cerebras",
-  }
-  // Add more models here as needed
+// If you add more providers, import them here
+
+// Combine all models into the main AImodels array
+export const AImodels: AIModelConfig[] = [
+  ...azureModels,
+  ...googleModels,
+  ...cerebrasModels,
+  // Spread other imported model arrays here
+  // Add more models here as needed (if they don't fit a provider category or are one-offs)
 ];
 
 // Select default based on isDefault flag or fallback
+// This logic remains the same and works on the combined AImodels array
 export const defaultModelConfig: AIModelConfig = AImodels.find(m => m.isDefault) || AImodels[0];
 
+// These constants remain as they are global to the AI service
 export const defaultSystemPrompt = "You are a helpful assistant.";
 export const API_STREAM_URL = "https://api-chat.kwikon.club/api/chat/stream";
-export const API_HISTORY_URL_BASE = "https://api-chat.kwikon.club/api/chat/"; // e.g., append {chatId}/history--- app/lib/auth.server.ts ---
+export const API_HISTORY_URL_BASE = "https://api-chat.kwikon.club/api/chat/"; // e.g., append {chatId}/history--- app/lib/model-list/azure-models.ts ---
+import type { AIModelConfig } from '../ai-models'; // Import the interface
+
+export const azureModels: AIModelConfig[] = [
+  // {
+  //   displayName: "GPT-4o Mini",
+  //   model: "gpt-4o-mini",
+  //   provider: "azure",
+  //   isDefault: true,
+  // },
+];--- app/lib/model-list/cerebras-models.ts ---
+import type { AIModelConfig } from '../ai-models'; // Import the interface
+
+export const cerebrasModels: AIModelConfig[] = [
+  {
+    displayName: "llama3.1-8b",
+    model: "llama3.1-8b",
+    provider: "cerebras",
+  },
+  {
+    displayName: "qwen-3-32b",
+    model: "qwen-3-32b",
+    provider: "cerebras",
+  },
+];--- app/lib/model-list/google-models.ts ---
+import type { AIModelConfig } from '../ai-models'; // Import the interface
+
+export const googleModels: AIModelConfig[] = [
+  {
+    displayName: "Gemini 2.5 flash",
+    model: "gemini-2.5-flash-preview-04-17",
+    provider: "google",
+    isDefault: true,
+  },
+  {
+    displayName: "Gemini 2.0 flash",
+    model: "gemini-2.0-flash",
+    provider: "google",
+    
+
+  },
+];--- app/lib/auth.server.ts ---
 // app/lib/auth.server.ts
 import { redirect } from "@remix-run/node";
 import { getApiUrl, API_ROUTES } from "./api.config";
@@ -263,6 +291,210 @@ export async function requireAuth(
   
   // Do NOT check for user presence — just return the auth status  
   return authStatus as Extract<AuthStatus, { status: "authenticated" }>;  
+}  --- app/hooks/useChatSessionMessages.ts ---
+// app/hooks/useChatSessionMessages.ts  
+import { useState, useEffect } from 'react';  
+import { Message } from '~/components/chat/MessageItem';  
+  
+type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';  
+  
+export function useChatSessionMessages({  
+  urlChatId,  
+  initialMessagesProp,  
+  streamChat,  
+  location,  
+  remixNavigation,  
+  navigate,  
+  startReactTransition,  
+  isNewChatTransitioning,  
+  setIsNewChatTransitioning,  
+  scrollToBottom,  
+}: {  
+  urlChatId: string | null;  
+  initialMessagesProp: Message[];  
+  streamChat: any;  
+  location: any;  
+  remixNavigation: any;  
+  navigate: any;  
+  startReactTransition: any;  
+  isNewChatTransitioning: boolean;  
+  setIsNewChatTransitioning: (v: boolean) => void;  
+  scrollToBottom: (behavior: ScrollBehavior) => void;  
+}) {  
+  const [chatPhase, setChatPhase] = useState<ChatLoadingPhase>('INITIALIZING');  
+  const [hasInitialized, setHasInitialized] = useState(false);  
+  
+  useEffect(() => {  
+    if (hasInitialized && remixNavigation.state !== 'idle') return;  
+  
+    const navState = location.state as { fromNewChatFlow?: boolean; initialMessages?: Message[] } | null;  
+  
+    if (isNewChatTransitioning && !urlChatId) return; // Corrected: pass as prop  
+  
+    setChatPhase('INITIALIZING');  
+  
+    if (urlChatId) {  
+      let messagesToUse: Message[] = initialMessagesProp;  
+  
+      if (  
+        streamChat.activeStreamChatId === urlChatId &&  
+        streamChat.messages.length > 0 &&  
+        initialMessagesProp.length === 0  
+      ) {  
+        messagesToUse = [...streamChat.messages];  
+      }  
+      if (navState?.fromNewChatFlow && streamChat.activeStreamChatId === urlChatId) {  
+        messagesToUse = [...streamChat.messages];  
+      } else if (navState?.fromNewChatFlow && navState.initialMessages) {  
+        messagesToUse = navState.initialMessages;  
+      } else if (streamChat.currentUIFocusChatId !== urlChatId) {  
+        if (!streamChat.isStreaming || streamChat.activeStreamChatId !== urlChatId) {  
+          streamChat.clearStreamState();  
+        }  
+      }  
+      streamChat.setMessagesForContext(messagesToUse, urlChatId);  
+  
+      if (navState?.fromNewChatFlow) {  
+        startReactTransition(() => {  
+          const { state, ...restOfLocation } = location;  
+          const { fromNewChatFlow: _fNCF, initialMessages: _iM, ...newStateWithoutFlow } = (state as any) || {};  
+          navigate(restOfLocation, {  
+            replace: true,  
+            state: Object.keys(newStateWithoutFlow).length > 0 ? newStateWithoutFlow : undefined,  
+          });  
+        });  
+        setIsNewChatTransitioning(false);  
+      }  
+      setChatPhase('PREPARING_CONTENT');  
+    } else if (!urlChatId) {  
+      if (  
+        streamChat.currentUIFocusChatId !== null ||  
+        (streamChat.messages.length > 0 && !streamChat.isStreaming)  
+      ) {  
+        streamChat.clearStreamState();  
+      }  
+      setChatPhase('READY');  
+    }  
+    setHasInitialized(true);  
+    // eslint-disable-next-line react-hooks/exhaustive-deps  
+  }, [urlChatId, initialMessagesProp, location.pathname, isNewChatTransitioning]);  
+  
+  useEffect(() => {  
+    return () => {  
+      setHasInitialized(false);  
+    };  
+  }, [location.pathname]);  
+  
+  useEffect(() => {  
+    if (  
+      chatPhase === 'PREPARING_CONTENT' &&  
+      streamChat.currentUIFocusChatId === urlChatId &&  
+      urlChatId  
+    ) {  
+      startReactTransition(() => {  
+        setChatPhase('READY');  
+        const navState = location.state as { fromNewChatFlow?: boolean } | null;  
+        if (!navState?.fromNewChatFlow) {  
+          requestAnimationFrame(() => scrollToBottom('auto'));  
+        }  
+      });  
+    }  
+  }, [  
+    chatPhase,  
+    urlChatId,  
+    streamChat.currentUIFocusChatId,  
+    scrollToBottom,  
+    location.state,  
+    startReactTransition,  
+  ]);  
+  
+  return {  
+    chatPhase,  
+    setChatPhase,  
+  };  
+}  --- app/hooks/useChatSendMessage.ts ---
+import { useCallback } from 'react';  
+import { v4 as uuidv4 } from 'uuid';  
+import { Message } from '~/components/chat/MessageItem';
+import type { AIModelConfig } from '~/lib/ai-models';  
+  
+export function useChatSendMessage({  
+  streamChat,  
+  urlChatId,  
+  lastSelectedModelMapRef,  
+  isReactTransitionPending,  
+  chatPhase,  
+  navigate,  
+  startReactTransition,  
+  setInput,  
+  setIsNewChatTransitioning,  
+  chatModelKey  
+}: {  
+  streamChat: any,  
+  urlChatId: string | null,  
+  lastSelectedModelMapRef: React.MutableRefObject<{[key: string]: AIModelConfig}>,  
+  isReactTransitionPending: boolean,  
+  chatPhase: string,  
+  navigate: any,  
+  startReactTransition: any,  
+  setInput: (v: string) => void,  
+  setIsNewChatTransitioning: (v: boolean) => void,  
+  chatModelKey: string  
+}) {  
+  return useCallback(  
+    async (inputTextValue: string, modelConfig: AIModelConfig) => {  
+      const trimmedInput = inputTextValue.trim();  
+      if (!trimmedInput || streamChat.isStreaming || isReactTransitionPending || chatPhase !== 'READY') {  
+        return;  
+      }  
+      setInput('');  
+      lastSelectedModelMapRef.current[chatModelKey] = modelConfig;  
+  
+      const userMessage: Message = {  
+        id: crypto.randomUUID(),  
+        role: 'user',  
+        content: trimmedInput,  
+      };  
+  
+      if (!urlChatId) {  
+        const newChatId = uuidv4();  
+        try {  
+          setIsNewChatTransitioning(true);  
+          streamChat.setMessagesForContext([userMessage], newChatId);  
+          const streamPromise = streamChat.startStream(trimmedInput, modelConfig, newChatId);  
+          setTimeout(() => {  
+            const destinationPath = `/chat/${newChatId}`;  
+            startReactTransition(() => {  
+              navigate(destinationPath, {  
+                replace: true,  
+                state: { initialMessages: [userMessage], fromNewChatFlow: true },  
+              });  
+            });  
+          }, 50);  
+          await streamPromise;  
+        } catch (error) {  
+          console.error('Error in new chat flow:', error);  
+          setIsNewChatTransitioning(false);  
+        }  
+      } else {  
+        try {  
+          streamChat.setMessagesForContext([...streamChat.messages, userMessage], urlChatId);  
+          await streamChat.startStream(trimmedInput, modelConfig, urlChatId);  
+        } catch (error) {  
+          console.error('Error in existing chat flow:', error);  
+        }  
+      }  
+    },  
+    [  
+      streamChat,  
+      urlChatId,  
+      isReactTransitionPending,  
+      chatPhase,  
+      navigate,  
+      startReactTransition,  
+      chatModelKey  
+    ]  
+  );  
 }  --- app/hooks/use-mobile.tsx ---
 import * as React from "react"
 
@@ -291,7 +523,40 @@ export function useIsMobile() {
   }, [])
 
   return !!isMobile
-}--- app/hooks/useScrollToBottom.ts ---
+}--- app/hooks/useSidebarHistoryRefreshOnChatChange.ts ---
+import { useEffect, useRef } from 'react';  
+  
+export function useSidebarHistoryRefreshOnChatChange(initialChatIdFromLoader: string | null, refreshChatHistory: () => void) {  
+  const prevChatIdRef = useRef<string | null>(null);  
+  
+  useEffect(() => {  
+    if (  
+      prevChatIdRef.current === null && // previously on new chat  
+      initialChatIdFromLoader !== null // now on an actual chat  
+    ) {  
+      refreshChatHistory();  
+    }  
+    prevChatIdRef.current = initialChatIdFromLoader;  
+  }, [initialChatIdFromLoader, refreshChatHistory]);  
+}  --- app/hooks/usePerChatModelSelection.ts ---
+import { useState, useEffect, useRef } from "react";  
+import type { AIModelConfig } from '~/lib/ai-models';  
+  
+export function usePerChatModelSelection(chatKey: string, defaultModel: AIModelConfig) {  
+  const mappingRef = useRef<{ [key: string]: AIModelConfig }>({});  
+  const [selectedModel, setSelectedModel] = useState<AIModelConfig>(defaultModel);  
+  
+  useEffect(() => {  
+    setSelectedModel(mappingRef.current[chatKey] ?? defaultModel);  
+  }, [chatKey, defaultModel]);  
+  
+  const handleModelChange = (model: AIModelConfig) => {  
+    setSelectedModel(model);  
+    mappingRef.current[chatKey] = model;  
+  };  
+  
+  return { selectedModel, handleModelChange };  
+}  --- app/hooks/useScrollToBottom.ts ---
 // Modified useScrollToBottom.ts hook
 
 import { useRef, useState, useEffect, useCallback } from 'react';
@@ -2122,638 +2387,187 @@ export const useStreamingChat = (): StreamingChatContextType => {
   }
   return context;
 };--- app/components/chat/ChatPageLayout.tsx ---
-import { useState, useEffect, useCallback, useRef, useTransition as useReactTransitionHook } from 'react';
-import { useNavigate, useLocation, useNavigation as useRemixNavigation, useParams } from '@remix-run/react';
-import { v4 as uuidv4 } from 'uuid';
-import type { Message } from './MessageItem';
-import { MessageList } from './MessageList';
-import { ChatInputBar } from './ChatInputBar';
-import { AImodels, defaultModelConfig } from '~/lib/ai-models';
-import type { AIModelConfig } from '~/lib/ai-models';
-import { useScrollToBottom } from '~/hooks/useScrollToBottom';
-import { FiArrowDown } from 'react-icons/fi';
-import { useStreamingChat } from '~/components/chat/streaming-chat-context';
-import { InitialGreeting } from './InitialGreeting';
-
-type ChatLoadingPhase = 'INITIALIZING' | 'PREPARING_CONTENT' | 'READY';
-
-interface ChatPageLayoutProps {
-  initialChatIdFromLoader: string | null;
-  initialMessagesProp: Message[];
-}
-
-export function ChatPageLayout({
-  initialChatIdFromLoader,
-  initialMessagesProp,
-}: ChatPageLayoutProps) {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const params = useParams();
-  const urlChatId = params.chatId || null;
-
-  const remixNavigation = useRemixNavigation();
-  const [isReactTransitionPending, startReactTransition] = useReactTransitionHook();
-
-  const streamChat = useStreamingChat();
-
-  const [input, setInput] = useState('');
-  const [selectedModel, setSelectedModel] = useState<AIModelConfig>(defaultModelConfig);
-  const [chatPhase, setChatPhase] = useState<ChatLoadingPhase>('INITIALIZING');
-  // Add a local state to prevent multiple context clears during navigation
-  const [hasInitialized, setHasInitialized] = useState(false);
-  // Add new state to track if we're in the new chat creation flow to prevent flickering
-  const [isNewChatTransitioning, setIsNewChatTransitioning] = useState(false);
-
-  const {
-    containerRef,
-    endRef,
-    showScrollDownButton,
-    scrollToBottom,
-    scrollToPartialView,    // <-- add this!  
-    resetManualScrollFlag   // <-- add this!  
-
-  } = useScrollToBottom(streamChat.messages);
-
-  // Effect 1: Core logic to initialize or update chat context
-  useEffect(() => {
-    if (hasInitialized && remixNavigation.state !== 'idle') {
-      // Don't re-initialize during navigation transitions
-      return;
-    }
-
-    const navState = location.state as { fromNewChatFlow?: boolean; initialMessages?: Message[] } | null;
-
-    // Skip state changes if we're in the middle of new chat transition
-    // This prevents double flickering
-    if (isNewChatTransitioning && !urlChatId) {
-      return;
-    }
-
-    setChatPhase('INITIALIZING');
-
-    // Scenario 1: Landed on a specific chat URL (e.g., /chat/:id)
-    if (urlChatId) {
-      let messagesToUse: Message[] = initialMessagesProp;
-      if (streamChat.activeStreamChatId === urlChatId &&
-        streamChat.messages.length > 0 &&
-        initialMessagesProp.length === 0) {
-        messagesToUse = [...streamChat.messages]; // Use existing context messages
-      }
-      // Special handling for navigation from new chat flow
-      if (navState?.fromNewChatFlow && streamChat.activeStreamChatId === urlChatId) {
-        messagesToUse = [...streamChat.messages]; // Use existing context (which might have streaming content)
-      } else if (navState?.fromNewChatFlow && navState.initialMessages) {
-        messagesToUse = navState.initialMessages;
-      } else if (streamChat.currentUIFocusChatId !== urlChatId) {
-        // Only clear and reset if we're switching to a different chat
-        // Don't clear during an active stream
-        if (!streamChat.isStreaming || streamChat.activeStreamChatId !== urlChatId) {
-          streamChat.clearStreamState();
-        }
-      }
-
-      // Always set messages for the current context
-      streamChat.setMessagesForContext(messagesToUse, urlChatId);
-
-      // Clean up navigation state if it was used
-      if (navState?.fromNewChatFlow) {
-        startReactTransition(() => {
-          const { state, ...restOfLocation } = location;
-          const { fromNewChatFlow: _fNCF, initialMessages: _iM, ...newStateWithoutFlow } = (state as any) || {};
-          navigate(restOfLocation, { replace: true, state: Object.keys(newStateWithoutFlow).length > 0 ? newStateWithoutFlow : undefined });
-        });
-        // Reset the new chat transition flag since we've completed the transition
-        setIsNewChatTransitioning(false);
-      }
-      setChatPhase('PREPARING_CONTENT');
-    }
-    // Scenario 2: On a new chat page (urlChatId is null)
-    else if (!urlChatId) {
-      // Only clear if we're coming from a different chat or if there's stale data
-      if (streamChat.currentUIFocusChatId !== null ||
-        (streamChat.messages.length > 0 && !streamChat.isStreaming)) {
-        streamChat.clearStreamState();
-      }
-      setChatPhase('READY');
-    }
-
-    setHasInitialized(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlChatId, initialMessagesProp, location.pathname, isNewChatTransitioning]);
-
-  // Reset initialization flag when URL changes
-  useEffect(() => {
-    return () => {
-      setHasInitialized(false);
-    };
-  }, [location.pathname]);
-
-  // Effect 2: Handle PREPARING_CONTENT phase
-  useEffect(() => {
-    if (chatPhase === 'PREPARING_CONTENT' && streamChat.currentUIFocusChatId === urlChatId && urlChatId) {
-      startReactTransition(() => {
-        setChatPhase('READY');
-        const navState = location.state as { fromNewChatFlow?: boolean } | null;
-        if (!navState?.fromNewChatFlow) { // Only scroll if not just landed from new chat flow
-          requestAnimationFrame(() => scrollToBottom('auto'));
-        }
-      });
-    }
-  }, [chatPhase, urlChatId, streamChat.currentUIFocusChatId, scrollToBottom, location.state, startReactTransition]);
-
-  const handleSendMessage = useCallback(
-    async (inputTextValue: string, modelConfig: AIModelConfig) => {
-      const trimmedInput = inputTextValue.trim();
-      if (!trimmedInput || streamChat.isStreaming || isReactTransitionPending || chatPhase !== 'READY') {
-        return;
-      }
-      setInput('');
-
-      const userMessage: Message = {
-        id: crypto.randomUUID(),
-        role: 'user',
-        content: trimmedInput,
-      };
-
-      if (!urlChatId) { // Current page is a "new chat" page
-        const newChatId = uuidv4();
-
-        try {
-          // Set flag to prevent flickering during the new chat transition
-          setIsNewChatTransitioning(true);
-
-          // 1. Set context for the new chat ID with ONLY the user message
-          // This keeps the message visible during transition
-          streamChat.setMessagesForContext([userMessage], newChatId);
-
-          // 2. Start the stream BEFORE navigation completes
-          // This ensures stream initialization isn't disrupted by navigation
-          const streamPromise = streamChat.startStream(trimmedInput, modelConfig, newChatId);
-
-          // 3. Navigate to new chat path with minimal visual transition
-          // Short delay to allow the UI to stabilize with user message
-          setTimeout(() => {
-            const destinationPath = `/chat/${newChatId}`;
-            startReactTransition(() => {
-              navigate(destinationPath, {
-                replace: true,
-                state: { initialMessages: [userMessage], fromNewChatFlow: true },
-              });
-            });
-
-          }, 50);
-
-          // 4. Await stream completion (in the background)
-          await streamPromise;
-        } catch (error) {
-          console.error("Error in new chat flow:", error);
-          setIsNewChatTransitioning(false); // Reset flag in case of error
-        }
-      } else { // Current page is an existing chat
-        try {
-          // Add user message to existing messages in context
-          streamChat.setMessagesForContext([...streamChat.messages, userMessage], urlChatId);
-          await streamChat.startStream(trimmedInput, modelConfig, urlChatId);
-        } catch (error) {
-          console.error("Error in existing chat flow:", error);
-        }
-      }
-    },
-    [streamChat, urlChatId, isReactTransitionPending, chatPhase, navigate, startReactTransition]
-  );
-
+// app/components/chat/ChatPageLayout.tsx  
+import React, { useState, useRef, useTransition as useReactTransitionHook, useEffect } from 'react';  
+import { useNavigate, useLocation, useNavigation as useRemixNavigation, useParams } from '@remix-run/react';  
+import { AImodels, defaultModelConfig } from '~/lib/ai-models';  
+import { useScrollToBottom } from '~/hooks/useScrollToBottom';  
+import { FiArrowDown } from 'react-icons/fi';  
+import { useStreamingChat } from '~/components/chat/streaming-chat-context';  
+import { InitialGreeting } from './InitialGreeting';  
+import { useSidebarChatHistory } from '~/components/sidebar-chat-history-context';  
+import { MessageList } from './MessageList';  
+import { ChatInputBar } from './ChatInputBar';  
+  
+import { usePerChatModelSelection } from '~/hooks/usePerChatModelSelection';  
+import { useChatSessionMessages } from '~/hooks/useChatSessionMessages';  
+import { useSidebarHistoryRefreshOnChatChange } from '~/hooks/useSidebarHistoryRefreshOnChatChange';  
+import { useChatSendMessage } from '~/hooks/useChatSendMessage';  
+  
+type ChatPageLayoutProps = {  
+  initialChatIdFromLoader: string | null;  
+  initialMessagesProp: any[];  
+};  
+  
+export function ChatPageLayout({ initialChatIdFromLoader, initialMessagesProp }: ChatPageLayoutProps) {  
+  const navigate = useNavigate();  
+  const location = useLocation();  
+  const params = useParams();  
+  const urlChatId = params.chatId || null;  
+  const remixNavigation = useRemixNavigation();  
+  const [isReactTransitionPending, startReactTransition] = useReactTransitionHook();  
+  const streamChat = useStreamingChat();  
+  
+  const [input, setInput] = useState('');  
+  const [isNewChatTransitioning, setIsNewChatTransitioning] = useState(false);  
+  
+  const chatModelKey = urlChatId || 'new-chat';  
+  
+  // -- get scroll hook FIRST so scrollToBottom variable is ready before calling other hooks  
+  const {  
+    containerRef,  
+    endRef,  
+    showScrollDownButton,  
+    scrollToBottom,  
+    scrollToPartialView,  
+    resetManualScrollFlag  
+  } = useScrollToBottom(streamChat.messages);  
+  
+  const { selectedModel, handleModelChange } = usePerChatModelSelection(chatModelKey, defaultModelConfig);  
+  
+  const { chatPhase, setChatPhase } = useChatSessionMessages({  
+    urlChatId,  
+    initialMessagesProp,  
+    streamChat,  
+    location,  
+    remixNavigation,  
+    navigate,  
+    startReactTransition,  
+    isNewChatTransitioning,  
+    setIsNewChatTransitioning,  
+    scrollToBottom,  
+  });  
+  
+  const lastSelectedModelMapRef = useRef<{ [key: string]: any }>({});  
+  
+  const handleSendMessage = useChatSendMessage({  
+    streamChat,  
+    urlChatId,  
+    lastSelectedModelMapRef,  
+    isReactTransitionPending,  
+    chatPhase,  
+    navigate,  
+    startReactTransition,  
+    setInput,  
+    setIsNewChatTransitioning,  
+    chatModelKey,  
+  });  
+  
+  // For sidebar history  
+  const { refreshChatHistory } = useSidebarChatHistory();  
+  useSidebarHistoryRefreshOnChatChange(initialChatIdFromLoader, refreshChatHistory);  
+  
   useEffect(() => {  
-  resetManualScrollFlag();  
-}, [urlChatId, resetManualScrollFlag]);  
-
-  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (input.trim() && chatPhase === 'READY' && !streamChat.isStreaming && !isReactTransitionPending) {
-      handleSendMessage(input, selectedModel);
-    }
-  };
-
-  const handlePromptSelect = (promptText: string) => {
-    if (chatPhase === 'READY' && !streamChat.isStreaming && !isReactTransitionPending) {
-      setInput(promptText);
-      handleSendMessage(promptText, selectedModel);
-    }
-  };
-
-  const isRemixNavigating = remixNavigation.state !== 'idle';
-  // Modify the content ready check to account for new chat transitions
-  const isContentReady = (chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending) ||
-    (isNewChatTransitioning && streamChat.messages.length > 0);
-
-  const childKey = urlChatId || "new-chat-page-active";
-
-  return (
-    <div className="flex flex-col h-full w-full">
-      <div ref={containerRef} className="flex-grow overflow-y-auto overflow-x-hidden relative">
-        {/* No visible loading indicators */}
-
-        <div
-          style={{
-            opacity: isContentReady ? 1 : 0,
-            transition: 'opacity 0.2s ease-in-out',
-            minHeight: '100%',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-          className="w-full"
-        >
-          <div className="max-w-4xl mx-auto w-full flex-grow flex flex-col">
-            {streamChat.messages.length === 0 ? (
-              <InitialGreeting />
-            ) : (
-              <MessageList
-                key={`ml-${childKey}`}
-                messages={streamChat.messages}
-                isLoading={
-                  streamChat.isStreaming &&
-                  streamChat.messages[streamChat.messages.length - 1]?.role === "assistant" &&
-                  streamChat.messages[streamChat.messages.length - 1]?.isLoading === true
-                }
-                isInitialHistoryLoading={false} // Never show history loading
-                scrollEndRef={endRef}
-              />
-            )}
-          </div>
-        </div>
-
-        {showScrollDownButton && (
-          <div className="sticky bottom-4 w-full flex justify-center pointer-events-none z-30">
-            <div className="max-w-4xl w-full flex justify-end pointer-events-auto px-4">
-              <button
-                onClick={() => scrollToBottom('smooth')}
-                className="p-2 bg-card border border-border rounded-full shadow-lg hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background transition-all duration-150 ease-in-out animate-fade-in"
-                aria-label="Scroll to latest messages"
-                title="Scroll to latest messages"
-                style={{ minWidth: 36, minHeight: 36, width: 36, height: 36 }}
-              >
-                <FiArrowDown size={16} aria-hidden="true" />
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="flex-shrink-0 bg-background border-t border-border">
-        <div className="max-w-4xl mx-auto w-full p-2 md:p-3">
-          <ChatInputBar
-            key={`cib-${childKey}`}
-            input={input}
-            onInputChange={e => setInput(e.target.value)}
-            onSubmit={handleFormSubmit}
-            isLoading={
-              chatPhase !== 'READY' ||
-              streamChat.isStreaming ||
-              isRemixNavigating ||
-              isReactTransitionPending
-            }
-            availableModels={AImodels}
-            selectedModel={selectedModel}
-            onModelChange={setSelectedModel}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function refreshChatHistory() {
-  throw new Error('Function not implemented.');
-}
---- app/components/chat/ChatPageLayout copy.tsx ---
-// app/components/ChatPageLayout.tsx (or wherever your ChatPageLayout is)
-import { useState, useEffect, useCallback, useRef, useTransition } from 'react';
-// If you want Remix's useTransition, use:
-// import { useTransition } from '@remix-run/react';
-import { useNavigate, useLocation } from '@remix-run/react';
-import type { Message } from './MessageItem'; // Adjust path if necessary
-import { MessageList } from './MessageList'; // Adjust path if necessary
-import { ChatInputBar } from './ChatInputBar'; // Adjust path if necessary
-import { InitialPrompts } from './InitialGreeting'; // Adjust path if necessary
-import {
-  AImodels,
-  defaultModelConfig,
-  defaultSystemPrompt,
-  API_STREAM_URL,
-} from '~/lib/ai-models'; // Adjust path if necessary
-import type { AIModelConfig } from '~/lib/ai-models'; // Adjust path if necessary
-
-interface ChatPageLayoutProps {
-  initialChatId: string | null;
-  initialMessages?: Message[];
-}
-
-export function ChatPageLayout({ initialChatId, initialMessages = [] }: ChatPageLayoutProps) {
-  const navigate = useNavigate();
-  const location = useLocation();
-  // React 18's useTransition
-  const [isPending, startTransition] = useTransition();
-
-  const chatLayoutKey = initialChatId || 'new-chat-session';
-
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
-  const [input, setInput] = useState('');
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<AIModelConfig>(defaultModelConfig);
-
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const messagesRef = useRef(messages);
-
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
-
-  useEffect(() => {
-    // Only reset messages if not streaming and initialMessages truly changed for the current chat
-    // This avoids resetting messages if initialMessages from loader is stale due to navigation state
-    if (!isStreaming && location.state?.fromNewChatFlow !== true) {
-      if (JSON.stringify(initialMessages) !== JSON.stringify(messagesRef.current.slice(0, initialMessages.length))) {
-        setMessages(initialMessages || []);
-      }
-    } else if (location.state?.fromNewChatFlow === true) {
-      // If navigated from new chat flow, messages are already set via state, clear the flag
-      // This assumes navigate state is cleared on subsequent navigations or reloads
-      const { state, ...rest } = location;
-      // @ts-ignore
-      const { fromNewChatFlow, ...newState } = state;
-      navigate(rest, { replace: true, state: Object.keys(newState).length > 0 ? newState : undefined });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialMessages, chatLayoutKey]); // Removed isStreaming to allow initialMessages to update if chat ID changes
-
-
-  useEffect(() => {
-    // Abort any ongoing stream and reset state when chat context changes
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort("Chat context changed or component unmounting");
-      abortControllerRef.current = null;
-    }
-    setIsStreaming(false); // Ensure streaming is false
-    setInput(''); // Clear input
-
-    // Set messages based on initialMessages from loader for the *current* chat ID
-    // This effect runs when initialChatId changes, ensuring correct messages are loaded.
-    setMessages(initialMessages || []);
-
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort("Component unmounting or initialChatId changing");
-        abortControllerRef.current = null;
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialChatId]); // Depend only on initialChatId for resetting context
-
-  const handleSendMessage = useCallback(async (inputText: string, modelConfig: AIModelConfig) => {
-    if (isStreaming || isPending) return;
-
-    setIsStreaming(true);
-    setInput('');
-
-    const newUserMessage: Message = { id: crypto.randomUUID(), role: 'user', content: inputText };
-    setMessages(prev => [...prev, newUserMessage]);
-
-    const assistantMessageId = crypto.randomUUID();
-    setMessages(prev => [...prev, { id: assistantMessageId, role: 'assistant', content: '' }]);
-    const currentAbortController = new AbortController();
-    abortControllerRef.current = currentAbortController;
-    let chatIdForRequest = initialChatId;
-
-    let receivedChatIdFromStream: string | null = null;
-
-    try {
-      const response = await fetch(API_STREAM_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-        body: JSON.stringify({
-          chatId: chatIdForRequest,
-          message: inputText,
-          provider: modelConfig.provider,
-          model: modelConfig.model,
-          systemPrompt: defaultSystemPrompt,
-        }),
-        signal: currentAbortController.signal,
-        credentials: 'include',
-      });
-
-      if (currentAbortController.signal.aborted) return;
-      if (!response.ok || !response.body) {
-        const errorBody = await response.text().catch(() => "Failed to read error body");
-        throw new Error(`API Error ${response.status}: ${errorBody.slice(0, 500)}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        if (currentAbortController.signal.aborted || done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        let newlineIndex;
-        while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, newlineIndex).trim();
-          buffer = buffer.slice(newlineIndex + 1);
-
-          if (line.startsWith("data: ")) {
-            const jsonDataString = line.substring(5);
-            if (jsonDataString) {
-              if (currentAbortController.signal.aborted) break;
-              try {
-                const chunk = JSON.parse(jsonDataString);
-                if (chunk.type === "session_info" && chunk.chatId && !initialChatId) {
-                  receivedChatIdFromStream = chunk.chatId;
-                }
-                handleStreamData(chunk, assistantMessageId);
-              } catch (e) {
-                if (!currentAbortController.signal.aborted)
-                  console.error("Error parsing stream data JSON:", e, jsonDataString);
-              }
-            }
-          }
-        }
-      }
-
-      if (!initialChatId && receivedChatIdFromStream) {
-        // Important: messagesRef.current will have the latest messages *including the streamed response*
-        // because setMessages in handleStreamData updates it.
-        startTransition(() => {
-          navigate(`/chat/${receivedChatIdFromStream}`, {
-            replace: true,
-            state: { initialMessages: messagesRef.current, fromNewChatFlow: true }
-          });
-        });
-        // setIsStreaming(false) will effectively be handled by the component re-keying or unmounting/remounting
-        // due to navigation and change in initialChatId.
-      } else {
-        // If it's an existing chat or no chatId was received (should not happen for new chat success)
-        // ensure streaming state is properly turned off if not already done by stream_end.
-        // This check for abort is important here.
-        if (!currentAbortController.signal.aborted) {
-          setIsStreaming(false);
-        }
-      }
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
-        // Only update if the message doesn't already indicate abortion
-        setMessages(prev =>
-          prev.map(msg =>
-            msg.id === assistantMessageId && msg.role === 'assistant' && !msg.content.includes("[Stream aborted]")
-              ? { ...msg, content: (msg.content || "") + `\n[Stream aborted]` }
-              : msg
-          ));
-      } else {
-        console.error(`Send/Stream error:`, error);
-        handleStreamError(assistantMessageId, error.message || "Failed to get response.");
-      }
-    } finally {
-      if (abortControllerRef.current === currentAbortController) {
-        abortControllerRef.current = null;
-      }
-      // If the navigation didn't happen (e.g., existing chat) and stream wasn't aborted,
-      // ensure streaming is set to false. This is a fallback.
-      // However, if navigation happens, the component might unmount/re-key which resets state.
-      if (!receivedChatIdFromStream && !currentAbortController.signal.aborted) {
-        setIsStreaming(false);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialChatId, isStreaming, selectedModel, navigate, isPending, startTransition]);
-
-  const handleStreamData = (chunk: any, assistantMessageId: string) => {
-    // Check if the stream was aborted by a new action or component unmount
-    if (abortControllerRef.current?.signal.aborted && !isStreaming) {
-      // If isStreaming is false, it means the stream was likely ended or aborted intentionally
-      // and we should not process further data for this assistant message.
-      return;
-    }
-
-    if (chunk.content) {
-      setMessages(prev =>
-        prev.map(msg =>
-          msg.id === assistantMessageId && msg.role === 'assistant'
-            ? { ...msg, content: msg.content + chunk.content }
-            : msg
-        )
-      );
-    } else if (chunk.type === 'usage_summary' || chunk.type === 'stream_end') {
-      // Only set isStreaming to false if the current abort controller is still active
-      // or if there's no active abort controller (implying natural end).
-      // This prevents race conditions if a new message was sent quickly.
-      if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) {
-        setIsStreaming(false);
-      }
-    } else if (chunk.error) {
-      handleStreamError(assistantMessageId, chunk.error.message || chunk.error);
-    }
-  };
-
-  const handleStreamError = (assistantMessageId: string, errorMessage: string) => {
-    setMessages(prev =>
-      prev.map(msg =>
-        msg.id === assistantMessageId && msg.role === 'assistant' && !msg.content.includes("[Error:")
-          ? { ...msg, content: (msg.content || "") + `\n[Error: ${errorMessage}]` }
-          : msg
-      )
-    );
-    // Ensure streaming is stopped on error, if not already aborted by a new request
-    if (!abortControllerRef.current || !abortControllerRef.current.signal.aborted) {
-      setIsStreaming(false);
-    }
-  };
-
-  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (input.trim() && !isStreaming && !isPending) {
-      handleSendMessage(input.trim(), selectedModel);
-    }
-  };
-
-  const handlePromptSelect = (promptText: string) => {
-    if (!isStreaming && !isPending) {
-      // Set input for immediate display, then send
-      setInput(promptText);
-      handleSendMessage(promptText, selectedModel);
-    }
-  };
-
-  const isNavigating = isPending; // useTransition's pending state
-  const displayInitialPrompts =
-    initialChatId === null &&
-    messages.length === 0 &&
-    !isStreaming &&
-    !input &&
-    !isNavigating;
-
-  // Use initialChatId for keying child components that depend on chat context
-  const childKey = initialChatId || "new-chat-internal";
-
-  return (
-    // Root div: takes full height and width from parent (AppLayout's main area)
-    // flex flex-col ensures children (message area and input bar) are stacked vertically
-    <div className="flex flex-col h-full w-full">
-
-      {/* Message List Area:
-          - flex-grow: takes up all available vertical space after input bar is accounted for.
-          - overflow-y-auto: enables vertical scrolling ONLY for this area.
-          - The scrollbar will appear on the right edge of THIS div.
-      */}
-      <div className="flex-grow overflow-y-auto">
-        {displayInitialPrompts ? (
-          // Container for InitialPrompts, centered within the scrollable area
-          // max-w-4xl mx-auto ensures content is centered horizontally
-          // h-full allows vertical centering content using flex
-          // p-4 for padding
-          <div className="max-w-4xl mx-auto w-full h-full flex flex-col justify-center items-center p-4">
-            <InitialPrompts onPromptSelect={handlePromptSelect} />
-          </div>
-        ) : (
-          // Container for MessageList
-          // max-w-4xl mx-auto ensures messages are centered horizontally
-          // w-full ensures it uses the available width up to max-w-4xl
-          // p-4 provides padding around the message list. Consider pb-0 if MessageList handles last item spacing.
-          <div className="max-w-4xl mx-auto w-full p-4">
-            <MessageList
-              key={`ml-${childKey}`} // Keyed to re-render if chat changes
-              messages={messages}
-              isLoading={isStreaming && !isNavigating} // Show loading indicator if streaming and not navigating away
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Chat Input Bar Area:
-          - flex-shrink-0: prevents this area from shrinking.
-          - bg-background, border-t, border-border: styling.
-      */}
-      <div className="flex-shrink-0 bg-background border-t border-border">
-        {/* Content wrapper for ChatInputBar:
-            - max-w-4xl mx-auto: centers the input bar content.
-            - w-full: ensures it takes full width up to max-w-4xl.
-            - p-2 md:p-3: original padding.
-        */}
-        <div className="max-w-4xl mx-auto w-full p-2 md:p-3">
-          <ChatInputBar
-            key={`cib-${childKey}`} // Keyed to re-render if chat changes
-            input={input}
-            onInputChange={e => setInput(e.target.value)}
-            onSubmit={handleFormSubmit}
-            isLoading={isStreaming || isNavigating} // Input disabled if streaming or navigating
-            availableModels={AImodels}
-            selectedModel={selectedModel}
-            onModelChange={setSelectedModel}
-          />
-        </div>
-      </div>
-    </div>
-  );
-}--- app/components/sidebar-header.tsx ---
+    resetManualScrollFlag();  
+  }, [urlChatId, resetManualScrollFlag]);  
+  
+  // UI event handlers  
+  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {  
+    e.preventDefault();  
+    if (  
+      input.trim() &&  
+      chatPhase === 'READY' &&  
+      !streamChat.isStreaming &&  
+      !isReactTransitionPending  
+    ) {  
+      handleSendMessage(input, selectedModel);  
+    }  
+  };  
+  
+  const handlePromptSelect = (promptText: string) => {  
+    if (chatPhase === 'READY' && !streamChat.isStreaming && !isReactTransitionPending) {  
+      setInput(promptText);  
+      handleSendMessage(promptText, selectedModel);  
+    }  
+  };  
+  
+  const isRemixNavigating = remixNavigation.state !== 'idle';  
+  const isContentReady =  
+    (chatPhase === 'READY' && !isRemixNavigating && !isReactTransitionPending) ||  
+    (isNewChatTransitioning && streamChat.messages.length > 0);  
+  const childKey = urlChatId || 'new-chat-page-active';  
+  
+  return (  
+    <div className="flex flex-col h-full w-full">  
+      <div ref={containerRef} className="flex-grow overflow-y-auto overflow-x-hidden relative">  
+        <div  
+          style={{  
+            opacity: isContentReady ? 1 : 0,  
+            transition: 'opacity 0.2s ease-in-out',  
+            minHeight: '100%',  
+            display: 'flex',  
+            flexDirection: 'column',  
+          }}  
+          className="w-full"  
+        >  
+          <div className="max-w-4xl mx-auto w-full flex-grow flex flex-col">  
+            {streamChat.messages.length === 0 ? (  
+              <InitialGreeting />  
+            ) : (  
+              <MessageList  
+                key={`ml-${childKey}`}  
+                messages={streamChat.messages}  
+                isLoading={  
+                  streamChat.isStreaming &&  
+                  streamChat.messages[streamChat.messages.length - 1]?.role === 'assistant' &&  
+                  streamChat.messages[streamChat.messages.length - 1]?.isLoading === true  
+                }  
+                isInitialHistoryLoading={false}  
+                scrollEndRef={endRef}  
+              />  
+            )}  
+          </div>  
+        </div>  
+  
+        {showScrollDownButton && (  
+          <div className="sticky bottom-4 w-full flex justify-center pointer-events-none z-30">  
+            <div className="max-w-4xl w-full flex justify-end pointer-events-auto px-4">  
+              <button  
+                onClick={() => scrollToBottom('smooth')}  
+                className="p-2 bg-card border border-border rounded-full shadow-lg hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background transition-all duration-150 ease-in-out animate-fade-in"  
+                aria-label="Scroll to latest messages"  
+                title="Scroll to latest messages"  
+                style={{ minWidth: 36, minHeight: 36, width: 36, height: 36 }}  
+              >  
+                <FiArrowDown size={16} aria-hidden="true" />  
+              </button>  
+            </div>  
+          </div>  
+        )}  
+      </div>  
+  
+      <div className="flex-shrink-0 bg-background border-t border-border">  
+        <div className="max-w-4xl mx-auto w-full p-2 md:p-3">  
+          <ChatInputBar  
+            key={`cib-${childKey}`}  
+            input={input}  
+            onInputChange={e => setInput(e.target.value)}  
+            onSubmit={handleFormSubmit}  
+            isLoading={  
+              chatPhase !== 'READY' ||  
+              streamChat.isStreaming ||  
+              isRemixNavigating ||  
+              isReactTransitionPending  
+            }  
+            availableModels={AImodels}  
+            selectedModel={selectedModel}  
+            onModelChange={handleModelChange}  
+          />  
+        </div>  
+      </div>  
+    </div>  
+  );  
+}  --- app/components/sidebar-header.tsx ---
 // components/sidebar-header.tsx  
 "use client";
 import * as React from "react";

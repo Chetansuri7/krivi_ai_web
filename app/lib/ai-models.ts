@@ -6,40 +6,27 @@ export interface AIModelConfig {
   isDefault?: boolean; // Optional: useful for selecting default
 }
 
-export const AImodels: AIModelConfig[] = [
-  {
-    displayName: "GPT-4o Mini",
-    model: "gpt-4o-mini",
-    provider: "azure",
-    isDefault: true, // Marking this as default as per your previous defaultModelConfig
+// Import models from their respective files
+import { azureModels } from './model-list/azure-models';
+import { cerebrasModels } from './model-list/cerebras-models';
+import { googleModels } from './model-list/google-models';
 
-  },
-  {
-    displayName: "Gemini 2.5 flash", // Updated display name to match model version (optional, adjust as needed)
-    model: "gemini-2.5-flash-preview-04-17", // From your example payload
-    provider: "google",
-  },
-  {
-    displayName: "Gemini 2.0 flash", // Updated display name to match model version (optional, adjust as needed)
-    model: "gemini-2.0-flash", // From your example payload
-    provider: "google",
-  },
-  {
-    displayName: "llama3.1-8b", // Updated display name to match model version (optional, adjust as needed)
-    model: "llama3.1-8b", // From your example payload
-    provider: "cerebras",
-  },
-  {
-    displayName: "qwen-3-32b", // Updated display name to match model version (optional, adjust as needed)
-    model: "qwen-3-32b", // From your example payload
-    provider: "cerebras",
-  }
-  // Add more models here as needed
+// If you add more providers, import them here
+
+// Combine all models into the main AImodels array
+export const AImodels: AIModelConfig[] = [
+  ...azureModels,
+  ...googleModels,
+  ...cerebrasModels,
+  // Spread other imported model arrays here
+  // Add more models here as needed (if they don't fit a provider category or are one-offs)
 ];
 
 // Select default based on isDefault flag or fallback
+// This logic remains the same and works on the combined AImodels array
 export const defaultModelConfig: AIModelConfig = AImodels.find(m => m.isDefault) || AImodels[0];
 
+// These constants remain as they are global to the AI service
 export const defaultSystemPrompt = "You are a helpful assistant.";
 export const API_STREAM_URL = "https://api-chat.kwikon.club/api/chat/stream";
 export const API_HISTORY_URL_BASE = "https://api-chat.kwikon.club/api/chat/"; // e.g., append {chatId}/history
