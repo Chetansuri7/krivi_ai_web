@@ -15,7 +15,7 @@ import { Button } from "~/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar";
 import { Separator } from "~/components/ui/separator";
 import { cn } from "~/lib/utils";
-import { getApiUrl } from "~/lib/api.config";
+import { getApiUrl, fetchWithHeaders } from "~/lib/api.config";
 
 interface User {
   name: string;
@@ -68,8 +68,8 @@ export function SidebarAccount(/*{ user, onLogout }: SidebarAccountProps*/) {
 
   const handleLogout = async () => {
     try {
-      const logoutUrl = getApiUrl("AUTH_LOGOUT");
-      await fetch(logoutUrl, {
+      // const logoutUrl = getApiUrl("AUTH_LOGOUT"); // No longer needed, fetchWithHeaders handles it
+      await fetchWithHeaders("AUTH_LOGOUT", {
         method: "POST",
         credentials: "include", // Important to send cookies
       });

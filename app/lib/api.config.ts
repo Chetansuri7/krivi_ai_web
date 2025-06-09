@@ -46,3 +46,33 @@ export function getApiUrl(routeKey: keyof typeof API_ROUTES): string {
   }
   return `${API_BASE_URL}${path}`;
 }
+/**
+ * A wrapper around the native fetch function that automatically adds
+ * the 'X-Client-Platform: Web' header to requests.
+ * It also uses getApiUrl to construct the full API URL if a routeKey is provided.
+ *
+ * @param input The resource that you wish to fetch. This can either be a string, a URL object, or a key from API_ROUTES.
+ * @param init An object containing any custom settings that you want to apply to the request.
+ * @returns A Promise that resolves to the Response to that request.
+ */
+export async function fetchWithHeaders(
+  input: keyof typeof API_ROUTES | RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  headers.set('X-Client-Platform', 'Web');
+
+  const newInit = {
+    ...init,
+    headers,
+  };
+
+  let url: RequestInfo | URL;
+  if (typeof input === 'string' && API_ROUTES[input as keyof typeof API_ROUTES]) {
+    url = getApiUrl(input as keyof typeof API_ROUTES);
+  } else {
+    url = input as RequestInfo | URL;
+  }
+
+  return fetch(url, newInit);
+}

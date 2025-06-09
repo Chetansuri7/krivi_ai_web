@@ -1,6 +1,6 @@
 // app/lib/auth.server.ts
 import { redirect } from "@remix-run/node";
-import { getApiUrl, API_ROUTES } from "./api.config";
+import { getApiUrl, API_ROUTES, fetchWithHeaders } from "./api.config";
 
 // --- Auth Status Types & Helpers ---
 
@@ -32,7 +32,7 @@ export function isRefreshable(auth: AuthStatus): auth is Extract<AuthStatus, { s
 
 export async function checkAuth(request: Request): Promise<AuthStatus> {
   try {
-    const response = await fetch(getApiUrl("AUTH_CHECK"), {
+    const response = await fetchWithHeaders("AUTH_CHECK", {
       method: "GET",
       headers: {
         cookie: request.headers.get("cookie") ?? "",
@@ -70,7 +70,7 @@ export async function checkAuth(request: Request): Promise<AuthStatus> {
 
 export async function refreshTokens(request: Request): Promise<{ ok: boolean; setCookieHeader?: string | null }> {
   try {
-    const response = await fetch(getApiUrl("AUTH_REFRESH"), {
+    const response = await fetchWithHeaders("AUTH_REFRESH", {
       method: "POST",
       headers: {
         cookie: request.headers.get("cookie") ?? "",

@@ -4,6 +4,7 @@ import { requireAuth } from "~/lib/auth.server";
 import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
 import type { Message } from "~/components/chat/MessageItem";
 import { API_HISTORY_URL_BASE } from "~/lib/ai-models";
+import { fetchWithHeaders } from "~/lib/api.config";
 import { json, LoaderFunctionArgs } from "@remix-run/node";
 
 
@@ -25,7 +26,7 @@ export async function loader({ request, params }: LoaderFunctionArgs): Promise<R
   const historyUrl = `${API_HISTORY_URL_BASE.replace(/\/$/, '')}/${chatId}/history?limit=50`;
 
   try {
-    const response = await fetch(historyUrl, {
+    const response = await fetchWithHeaders(historyUrl, {
       method: 'GET',
       headers: { 'Cookie': request.headers.get('Cookie') || '' },
     });

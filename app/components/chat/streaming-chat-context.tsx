@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useRef, useCallback, useEff
 import type { Message } from '~/components/chat/MessageItem';
 import type { AIModelConfig } from '~/lib/ai-models';
 import { API_STREAM_URL, defaultSystemPrompt } from '~/lib/ai-models';
+import { fetchWithHeaders } from '~/lib/api.config';
 
 interface StreamData {
   chatId?: string; // Backend might still send this, but we won't use it for session ID determination
@@ -122,7 +123,7 @@ export const StreamingChatProvider = ({ children }: { children: React.ReactNode 
       abortControllerRef.current = new AbortController();
 
       try {
-        const response = await fetch(API_STREAM_URL, {
+        const response = await fetchWithHeaders(API_STREAM_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
           body: JSON.stringify({

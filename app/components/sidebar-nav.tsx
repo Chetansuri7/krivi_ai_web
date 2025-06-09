@@ -5,7 +5,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/component
 import { Button } from "~/components/ui/button";
 import { Separator } from "~/components/ui/separator";
 import { cn } from "~/lib/utils";
-import { getApiUrl } from "~/lib/api.config";
+import { getApiUrl, fetchWithHeaders } from "~/lib/api.config";
 import { useSidebar } from "./ui/sidebar";
 import { useSidebarChatHistory } from "./sidebar-chat-history-context";
 
@@ -221,8 +221,8 @@ export function SidebarNav({ mainNav }: SidebarNavProps) {
     setIsLoadingHistory(true);
     setErrorHistory(null);
     try {
-      const apiUrl = getApiUrl("CHAT_SESSION_LIST");
-      const response = await fetch(apiUrl, {
+      // const apiUrl = getApiUrl("CHAT_SESSION_LIST"); // No longer needed
+      const response = await fetchWithHeaders("CHAT_SESSION_LIST", {
         credentials: "include",
         headers: { "Accept": "application/json" }
       });
