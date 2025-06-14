@@ -16,6 +16,14 @@ import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar";
 import { Separator } from "~/components/ui/separator";
 import { cn } from "~/lib/utils";
 import { getApiUrl, fetchWithHeaders } from "~/lib/api.config";
+import {
+  KRIVILAK_COOKIE_EMAIL,
+  KRIVILAK_COOKIE_DISPLAYNAME,
+  KRIVILAK_COOKIE_FIRSTNAME,
+  KRIVILAK_COOKIE_LASTNAME,
+  KRIVILAK_COOKIE_PROFILE_PIC_URL,
+  KRIVILAK_USER_COOKIE_NAMES,
+} from "~/lib/user-cookie-keys";
 
 interface User {
   name: string;
@@ -33,11 +41,11 @@ export function SidebarAccount(/*{ user, onLogout }: SidebarAccountProps*/) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const email = Cookies.get("kwikon_ui_email") || "";
-    const displayName = Cookies.get("kwikon_ui_displayname");
-    const firstName = Cookies.get("kwikon_ui_firstname");
-    const lastName = Cookies.get("kwikon_ui_lastname");
-    const profilePictureUrl = Cookies.get("kwikon_ui_profilepictureurl") || "";
+    const email = Cookies.get(KRIVILAK_COOKIE_EMAIL) || "";
+    const displayName = Cookies.get(KRIVILAK_COOKIE_DISPLAYNAME);
+    const firstName = Cookies.get(KRIVILAK_COOKIE_FIRSTNAME);
+    const lastName = Cookies.get(KRIVILAK_COOKIE_LASTNAME);
+    const profilePictureUrl = Cookies.get(KRIVILAK_COOKIE_PROFILE_PIC_URL) || "";
 
     let name = "User";
     if (displayName) {
@@ -78,16 +86,7 @@ export function SidebarAccount(/*{ user, onLogout }: SidebarAccountProps*/) {
       // Proceed with client-side cleanup even if API call fails
     } finally {
       // Clear all relevant cookies
-      const cookieNames = [
-        "kwikon_at",
-        "kwikon_rt",
-        "kwikon_ui_email",
-        "kwikon_ui_displayname",
-        "kwikon_ui_firstname",
-        "kwikon_ui_lastname",
-        "kwikon_ui_profilepictureurl",
-      ];
-      cookieNames.forEach((cookieName) => {
+      KRIVILAK_USER_COOKIE_NAMES.forEach((cookieName) => {
         Cookies.remove(cookieName, { path: "/" }); // Ensure path is correct if cookies were set with a specific path
       });
       // Redirect to login page

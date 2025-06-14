@@ -54,10 +54,8 @@ export async function checkAuth(request: Request): Promise<AuthStatus> {
     }
 
     const data = await response.json();
-    // Ensure the success response also matches the AuthStatus structure
-    if (data && data.status === "authenticated" && data.reason) {
-      // 'user' field is optional in AuthStatus, so it's fine if backend doesn't always send it
-      // but for requireAuth, we'll expect it.
+    // Accept any valid AuthStatus with status and reason, not just "authenticated"
+    if (data && data.status && data.reason) {
       return data as AuthStatus;
     }
     console.error("Auth check API response is not in expected AuthStatus format:", data);
@@ -68,88 +66,121 @@ export async function checkAuth(request: Request): Promise<AuthStatus> {
   }
 }
 
-export async function refreshTokens(request: Request): Promise<{ ok: boolean; setCookieHeader?: string | null }> {
+export async function refreshTokens(request: Request): Promise<{ ok: boolean; setCookieHeaders?: string[] | null }> {
   try {
     const response = await fetchWithHeaders("AUTH_REFRESH", {
       method: "POST",
       headers: {
         cookie: request.headers.get("cookie") ?? "",
+        'X-Client-Platform': 'Web', // As per user feedback, ensure this header if backend expects it
       },
       credentials: "include",
     });
 
-    const setCookieHeader = response.headers.get("set-cookie");
+    const setCookieHeaders = response.headers.getSetCookie(); // Correct method for Remix/Node.js
 
     if (!response.ok) {
       const errorBody = await response.text();
       console.warn("Refresh token request failed:", response.status, errorBody);
-      return { ok: false, setCookieHeader };
+      // Still return headers, backend might clear cookies on failure
+      return { ok: false, setCookieHeaders: setCookieHeaders.length > 0 ? setCookieHeaders : null };
     }
 
     const data = await response.json();
     // Assuming backend returns a success status or specific message
     if (data.status === "Success" || data.message?.includes("refreshed") || data.ok === true || response.status === 200) {
-      return { ok: true, setCookieHeader };
+      return { ok: true, setCookieHeaders };
     } else {
       console.warn("Refresh token API call was not successful according to response body:", data);
-      return { ok: false, setCookieHeader };
+      return { ok: false, setCookieHeaders: setCookieHeaders.length > 0 ? setCookieHeaders : null };
     }
   } catch (error) {
     console.error("Error during refreshTokens:", error);
-    return { ok: false };
+    return { ok: false, setCookieHeaders: null };
   }
 }
 
-export async function requireAuth(  
-  request: Request,  
-  redirectTo: string = "/login"  
-): Promise<Extract<AuthStatus, { status: "authenticated" }>> {  
-  let authStatus = await checkAuth(request);  
-  
-  if (isRefreshable(authStatus)) {  
-    const { ok, setCookieHeader } = await refreshTokens(request);  
-    if (ok && setCookieHeader) {  
-      const currentUrl = new URL(request.url);  
-      const destination = currentUrl.pathname + currentUrl.search;  
-      throw redirect(destination, {  
-        headers: { "Set-Cookie": setCookieHeader },  
-      });  
-    }  
-    authStatus = await checkAuth(request);  
-  }  
-  
-  if (!isAuthenticated(authStatus)) {  
-    const currentPath = new URL(request.url).pathname;  
-    const currentSearch = new URL(request.url).search;  
-    const nextParam =  
-      currentPath !== redirectTo && (currentPath !== "/" || currentSearch !== "")  
-        ? `?next=${encodeURIComponent(currentPath + currentSearch)}`  
-        : "";  
-    let reasonParam = "";  
-    if (  
-      authStatus.status === "login_required" &&  
-      authStatus.reason  
-    ) {  
-      reasonParam = `&error_description=${encodeURIComponent(  
-        authStatus.reason  
-      )}`;  
-    } else if (authStatus.status === "error" && authStatus.reason) {  
-      reasonParam = `&error_description=${encodeURIComponent(  
-        authStatus.reason  
-      )}`;  
-    } else if (authStatus.status === "error") {  
-      reasonParam = `&error_description=auth_check_failed`;  
-    }  
-    const finalRedirectTo = `${redirectTo}${nextParam}${nextParam && reasonParam  
-      ? reasonParam  
-      : !nextParam && reasonParam  
-      ? "?" + reasonParam.substring(1)  
-      : ""  
-      }`;  
-  
-    throw redirect(finalRedirectTo);  
-  }  
-  
-  // Do NOT check for user presence — just return the auth status  
-  return authStatus as Extract<AuthStatus, { status: "authenticated" }>;  
-}  
+export async function requireAuth(
+  request: Request,
+  redirectTo: string = "/login"
+): Promise<Extract<AuthStatus, { status: "authenticated" }>> {
+  const isDebug = typeof process !== 'undefined' && process.env.NODE_ENV !== 'production';
+  const responseHeaders = new Headers(); // To accumulate Set-Cookie headers
+
+  let authStatus = await checkAuth(request);
+
+  if (isDebug) {
+    console.info('[requireAuth] Initial /auth/check result:', authStatus);
+  }
+
+  if (isRefreshable(authStatus)) {
+    if (isDebug) {
+      console.warn('[requireAuth] status=refresh_required, attempting refresh...');
+    }
+    const { ok, setCookieHeaders } = await refreshTokens(request);
+    if (isDebug) {
+      console.info('[requireAuth] /auth/refresh result:', ok, 'Cookies to set:', setCookieHeaders);
+    }
+
+    if (ok && setCookieHeaders && setCookieHeaders.length > 0) {
+      setCookieHeaders.forEach(cookie => responseHeaders.append("Set-Cookie", cookie));
+      if (isDebug) {
+        console.info('[requireAuth] Refresh successful. Redirecting to URL:', request.url, 'with new Set-Cookie headers.');
+      }
+      // CRITICAL STEP: Redirect to the current URL to apply new cookies.
+      throw redirect(request.url, { headers: responseHeaders });
+    } else {
+      // REFRESH FAILED or no cookies returned:
+      if (isDebug) {
+        console.warn('[requireAuth] Refresh failed or no new cookies set. Re-checking auth status...');
+      }
+      // If refresh call itself returned cookies (e.g. to clear them), add them.
+      if (setCookieHeaders && setCookieHeaders.length > 0) {
+        setCookieHeaders.forEach(cookie => responseHeaders.append("Set-Cookie", cookie));
+      }
+      authStatus = await checkAuth(request); // Re-check with (likely old) cookies
+      if (isDebug) {
+        console.info('[requireAuth] /auth/check after failed/no-cookie refresh:', authStatus);
+      }
+    }
+  }
+
+  if (!isAuthenticated(authStatus)) {
+    if (isDebug) {
+      console.warn('[requireAuth] Not authenticated after all checks. Redirecting to login. Status:', authStatus);
+    }
+    const currentPath = new URL(request.url).pathname;
+    const currentSearch = new URL(request.url).search;
+    const nextParam =
+      currentPath !== redirectTo && (currentPath !== "/" || currentSearch !== "")
+        ? `?next=${encodeURIComponent(currentPath + currentSearch)}`
+        : "";
+    let reasonParam = "";
+    if (authStatus.status === "login_required") { // authStatus.reason is guaranteed by type
+      reasonParam = `&error_description=${encodeURIComponent(authStatus.reason)}`;
+    } else if (authStatus.status === "error") {
+      if (authStatus.reason) {
+        reasonParam = `&error_description=${encodeURIComponent(authStatus.reason)}`;
+      } else {
+        reasonParam = `&error_description=auth_check_error_unknown_reason`;
+      }
+    } else { // Fallback for any other unauthenticated status not explicitly handled above
+      reasonParam = `&error_description=auth_failed_unspecified_reason`;
+    }
+    
+    const finalRedirectTo = `${redirectTo}${nextParam}${nextParam && reasonParam ? reasonParam : !nextParam && reasonParam ? "?" + reasonParam.substring(1) : ""}`;
+    
+    // Pass any accumulated Set-Cookie headers (e.g., from a failed refresh that clears cookies)
+    throw redirect(finalRedirectTo, { headers: responseHeaders });
+  }
+
+  if (isDebug) {
+    console.info('[requireAuth] Authenticated! User:', authStatus.user);
+  }
+  // If loader needs to return data with headers: return json({ user: authStatus.user }, { headers: responseHeaders });
+  // For now, just return authStatus. If responseHeaders has Set-Cookie from a successful refresh
+  // that somehow didn't redirect (which shouldn't happen with the logic above),
+  // those cookies won't be applied to the client by returning authStatus directly without headers.
+  // The redirect is the primary mechanism.
+  return authStatus as Extract<AuthStatus, { status: "authenticated" }>;
+}

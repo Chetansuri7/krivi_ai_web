@@ -16,6 +16,20 @@ export function isProbablyMobile(): boolean {
   // Fallback for SSR or non-browser environments
   return false;
 }--- app/lib/api.config.ts ---
+/**
+* SCALABLE AUTH FLOW (fetchWithHeaders)
+* =====================================
+* On any API call:
+*   - If access token is expired (401), fetchWithHeaders calls /auth/check.
+*   - If /auth/check returns { status: "refresh_required", reason: "valid_refresh_token" },
+*     fetchWithHeaders POSTs to /auth/refresh.
+*   - If refresh succeeds, fetchWithHeaders retries the original request ONCE with new tokens.
+*   - If refresh fails, or /auth/check returns login_required, fetchWithHeaders returns the 401.
+*   - UI code (route loaders or React) should redirect to login only if a request fails with 401 after retry.
+*   - All token logic is centralized here; UI never needs to manually call /auth/refresh.
+*   - Backend must ensure new tokens are sent as HttpOnly cookies on refresh.
+*   - This ensures users are never forced to login again unless both tokens are invalid/expired.
+*/
 // app/lib/api.config.ts
 
 // For client-side access in Remix + Vite, use VITE_ prefix for env vars
@@ -42,6 +56,8 @@ export const API_ROUTES = {
 
   // Chat - Ensure path starts with '/'
   CHAT_SESSION_LIST: "/api/chat/session_list",
+  CHAT_STREAM: "/api/chat/stream",
+  CHAT_HISTORY_BASE: "/api/chat", // Base path for history, e.g., /api/chat/{chatId}/history
 
   // Other API routes can be added here
   // EXAMPLE_DATA: "/api/example",
@@ -63,6 +79,113 @@ export function getApiUrl(routeKey: keyof typeof API_ROUTES): string {
     throw new Error(`API route for key "${String(routeKey)}" not found.`);
   }
   return `${API_BASE_URL}${path}`;
+}
+/**
+ * A wrapper around the native fetch function that automatically adds
+ * the 'X-Client-Platform: Web' header to requests.
+ * It also uses getApiUrl to construct the full API URL if a routeKey is provided.
+ *
+ * @param input The resource that you wish to fetch. This can either be a string, a URL object, or a key from API_ROUTES.
+ * @param init An object containing any custom settings that you want to apply to the request.
+ * @returns A Promise that resolves to the Response to that request.
+ */
+export async function fetchWithHeaders(
+  input: keyof typeof API_ROUTES | RequestInfo | URL,
+  init?: RequestInit,
+  _retry?: boolean // Internal flag to prevent infinite retry
+): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  headers.set('X-Client-Platform', 'Web');
+
+  const newInit = {
+    ...init,
+    headers,
+    credentials: 'include' as RequestCredentials, // Ensure cookies are sent
+  };
+
+  let url: RequestInfo | URL;
+  if (typeof input === 'string' && API_ROUTES[input as keyof typeof API_ROUTES]) {
+    url = getApiUrl(input as keyof typeof API_ROUTES);
+  } else {
+    url = input as RequestInfo | URL;
+  }
+
+  // Perform the fetch
+  let response = await fetch(url, newInit);
+
+  // Handle 401 Unauthorized (reactive refresh)
+  if (response.status === 401 && !_retry) {
+    const isDebug = typeof process !== 'undefined' && process.env.NODE_ENV !== 'production';
+    try {
+      if (isDebug) {
+        console.warn('[auth/flow] 401 received for API call. Triggering /auth/check...');
+      }
+      // Check auth state
+      const checkResp = await fetch(getApiUrl('AUTH_CHECK'), {
+        method: 'GET',
+        credentials: 'include' as RequestCredentials,
+        headers: { 'X-Client-Platform': 'Web' },
+      });
+      const checkData = await checkResp.json();
+      if (isDebug) {
+        console.info('[auth/flow] /auth/check response:', checkData);
+      }
+
+      if (checkData.status === 'refresh_required') {
+        if (isDebug) {
+          console.warn('[auth/flow] refresh_required received. Triggering /auth/refresh...');
+        }
+        // Try refresh
+        const refreshResp = await fetch(getApiUrl('AUTH_REFRESH'), {
+          method: 'POST',
+          credentials: 'include' as RequestCredentials,
+          headers: { 'X-Client-Platform': 'Web' },
+        });
+        let refreshJson = null;
+        try {
+          refreshJson = await refreshResp.clone().json();
+        } catch { refreshJson = await refreshResp.clone().text(); }
+        if (isDebug) {
+          console.info('[auth/flow] /auth/refresh response:', refreshJson, { status: refreshResp.status });
+        }
+        if (refreshResp.ok && refreshJson && refreshJson.status === "Success") {
+          if (isDebug) {
+            console.info('[auth/flow] Refresh succeeded. Retrying original request...');
+          }
+          // Try original request again, only once
+          const retryResp = await fetchWithHeaders(input, init, true);
+          if (isDebug) {
+            console.info('[auth/flow] Retried original request after refresh. Status:', retryResp.status);
+          }
+          return retryResp;
+        } else {
+          if (isDebug) {
+            console.warn('[auth/flow] Refresh failed or did not return Success. User will be logged out.');
+          }
+          // Refresh failed, signal to logout
+          return response;
+        }
+      } else if (checkData.status === 'login_required') {
+        if (isDebug) {
+          console.warn('[auth/flow] login_required received from /auth/check. User will be logged out.');
+        }
+        // Signal logout
+        return response;
+      }
+      // If status is "authenticated", let original 401 stand (unusual)
+      if (isDebug) {
+        console.warn('[auth/flow] /auth/check returned authenticated after 401, which is unexpected. Returning original response.');
+      }
+      return response;
+    } catch (err) {
+      if (isDebug) {
+        console.error('[auth/flow] Error during 401 reactive refresh flow:', err);
+      }
+      // On error, let original 401 stand
+      return response;
+    }
+  }
+  return response;
 }--- app/lib/ai-models.ts ---
 // app/lib/ai-models.ts
 export interface AIModelConfig {
@@ -76,6 +199,7 @@ export interface AIModelConfig {
 import { azureModels } from './model-list/azure-models';
 import { cerebrasModels } from './model-list/cerebras-models';
 import { googleModels } from './model-list/google-models';
+import { API_BASE_URL } from '~/lib/api.config'; // Import API_BASE_URL
 
 // If you add more providers, import them here
 
@@ -94,8 +218,31 @@ export const defaultModelConfig: AIModelConfig = AImodels.find(m => m.isDefault)
 
 // These constants remain as they are global to the AI service
 export const defaultSystemPrompt = "You are a helpful assistant.";
-export const API_STREAM_URL = "https://api-chat.kwikon.club/api/chat/stream";
-export const API_HISTORY_URL_BASE = "https://api-chat.kwikon.club/api/chat/"; // e.g., append {chatId}/history--- app/lib/model-list/azure-models.ts ---
+
+// Use API_BASE_URL to construct these URLs
+export const API_STREAM_URL = API_BASE_URL ? `${API_BASE_URL}/api/chat/stream` : "/api/chat/stream";
+export const API_HISTORY_URL_BASE = API_BASE_URL ? `${API_BASE_URL}/api/chat` : "/api/chat"; // Note: path adjusted, specific endpoint like /:chatId/history will be appended by calling code--- app/lib/user-cookie-keys.ts ---
+// Centralized user-related cookie keys for easy updates
+// Naming aligns with backend and curl example provided by user
+
+export const KRIVILAK_COOKIE_EMAIL = "krivilak_ui_email";
+export const KRIVILAK_COOKIE_DISPLAYNAME = "krivilak_ui_displayname";
+export const KRIVILAK_COOKIE_FIRSTNAME = "krivilak_ui_firstname";
+export const KRIVILAK_COOKIE_LASTNAME = "krivilak_ui_lastname";
+export const KRIVILAK_COOKIE_PROFILE_PIC_URL = "krivilak_ui_profilepictureurl";
+export const KRIVILAK_COOKIE_AT = "krivilak_at";
+export const KRIVILAK_COOKIE_RT = "krivilak_rt";
+
+// For easy iteration/cleanup
+export const KRIVILAK_USER_COOKIE_NAMES = [
+  KRIVILAK_COOKIE_AT,
+  KRIVILAK_COOKIE_RT,
+  KRIVILAK_COOKIE_EMAIL,
+  KRIVILAK_COOKIE_DISPLAYNAME,
+  KRIVILAK_COOKIE_FIRSTNAME,
+  KRIVILAK_COOKIE_LASTNAME,
+  KRIVILAK_COOKIE_PROFILE_PIC_URL,
+];--- app/lib/model-list/azure-models.ts ---
 import type { AIModelConfig } from '../ai-models'; // Import the interface
 
 export const azureModels: AIModelConfig[] = [
@@ -139,7 +286,7 @@ export const googleModels: AIModelConfig[] = [
 ];--- app/lib/auth.server.ts ---
 // app/lib/auth.server.ts
 import { redirect } from "@remix-run/node";
-import { getApiUrl, API_ROUTES } from "./api.config";
+import { getApiUrl, API_ROUTES, fetchWithHeaders } from "./api.config";
 
 // --- Auth Status Types & Helpers ---
 
@@ -171,7 +318,7 @@ export function isRefreshable(auth: AuthStatus): auth is Extract<AuthStatus, { s
 
 export async function checkAuth(request: Request): Promise<AuthStatus> {
   try {
-    const response = await fetch(getApiUrl("AUTH_CHECK"), {
+    const response = await fetchWithHeaders("AUTH_CHECK", {
       method: "GET",
       headers: {
         cookie: request.headers.get("cookie") ?? "",
@@ -193,10 +340,8 @@ export async function checkAuth(request: Request): Promise<AuthStatus> {
     }
 
     const data = await response.json();
-    // Ensure the success response also matches the AuthStatus structure
-    if (data && data.status === "authenticated" && data.reason) {
-      // 'user' field is optional in AuthStatus, so it's fine if backend doesn't always send it
-      // but for requireAuth, we'll expect it.
+    // Accept any valid AuthStatus with status and reason, not just "authenticated"
+    if (data && data.status && data.reason) {
       return data as AuthStatus;
     }
     console.error("Auth check API response is not in expected AuthStatus format:", data);
@@ -209,7 +354,7 @@ export async function checkAuth(request: Request): Promise<AuthStatus> {
 
 export async function refreshTokens(request: Request): Promise<{ ok: boolean; setCookieHeader?: string | null }> {
   try {
-    const response = await fetch(getApiUrl("AUTH_REFRESH"), {
+    const response = await fetchWithHeaders("AUTH_REFRESH", {
       method: "POST",
       headers: {
         cookie: request.headers.get("cookie") ?? "",
@@ -243,55 +388,72 @@ export async function requireAuth(
   request: Request,  
   redirectTo: string = "/login"  
 ): Promise<Extract<AuthStatus, { status: "authenticated" }>> {  
-  let authStatus = await checkAuth(request);  
-  
-  if (isRefreshable(authStatus)) {  
-    const { ok, setCookieHeader } = await refreshTokens(request);  
-    if (ok && setCookieHeader) {  
-      const currentUrl = new URL(request.url);  
-      const destination = currentUrl.pathname + currentUrl.search;  
-      throw redirect(destination, {  
-        headers: { "Set-Cookie": setCookieHeader },  
-      });  
-    }  
-    authStatus = await checkAuth(request);  
-  }  
-  
-  if (!isAuthenticated(authStatus)) {  
-    const currentPath = new URL(request.url).pathname;  
-    const currentSearch = new URL(request.url).search;  
-    const nextParam =  
-      currentPath !== redirectTo && (currentPath !== "/" || currentSearch !== "")  
-        ? `?next=${encodeURIComponent(currentPath + currentSearch)}`  
-        : "";  
-    let reasonParam = "";  
-    if (  
-      authStatus.status === "login_required" &&  
-      authStatus.reason  
-    ) {  
-      reasonParam = `&error_description=${encodeURIComponent(  
-        authStatus.reason  
-      )}`;  
-    } else if (authStatus.status === "error" && authStatus.reason) {  
-      reasonParam = `&error_description=${encodeURIComponent(  
-        authStatus.reason  
-      )}`;  
-    } else if (authStatus.status === "error") {  
-      reasonParam = `&error_description=auth_check_failed`;  
-    }  
-    const finalRedirectTo = `${redirectTo}${nextParam}${nextParam && reasonParam  
-      ? reasonParam  
-      : !nextParam && reasonParam  
-      ? "?" + reasonParam.substring(1)  
-      : ""  
-      }`;  
-  
-    throw redirect(finalRedirectTo);  
-  }  
-  
-  // Do NOT check for user presence — just return the auth status  
-  return authStatus as Extract<AuthStatus, { status: "authenticated" }>;  
-}  --- app/hooks/useChatSessionMessages.ts ---
+  const isDebug = typeof process !== 'undefined' && process.env.NODE_ENV !== 'production';
+
+  let authStatus = await checkAuth(request);
+
+  if (isDebug) {
+    console.info('[requireAuth] Initial /auth/check result:', authStatus);
+  }
+
+  if (isRefreshable(authStatus)) {
+    if (isDebug) {
+      console.warn('[requireAuth] status=refresh_required, attempting refresh...');
+    }
+    const { ok } = await refreshTokens(request);
+    if (isDebug) {
+      console.info('[requireAuth] /auth/refresh result:', ok);
+    }
+    if (ok) {
+      authStatus = await checkAuth(request);
+      if (isDebug) {
+        console.info('[requireAuth] /auth/check after refresh:', authStatus);
+      }
+    }
+    // If refresh failed, fall through and handle as unauthenticated.
+  }
+
+  if (!isAuthenticated(authStatus)) {
+    if (isDebug) {
+      console.warn('[requireAuth] Not authenticated after all checks, redirecting to login.', authStatus);
+    }
+    const currentPath = new URL(request.url).pathname;
+    const currentSearch = new URL(request.url).search;
+    const nextParam =
+      currentPath !== redirectTo && (currentPath !== "/" || currentSearch !== "")
+        ? `?next=${encodeURIComponent(currentPath + currentSearch)}`
+        : "";
+    let reasonParam = "";
+    if (
+      authStatus.status === "login_required" &&
+      authStatus.reason
+    ) {
+      reasonParam = `&error_description=${encodeURIComponent(
+        authStatus.reason
+      )}`;
+    } else if (authStatus.status === "error" && authStatus.reason) {
+      reasonParam = `&error_description=${encodeURIComponent(
+        authStatus.reason
+      )}`;
+    } else if (authStatus.status === "error") {
+      reasonParam = `&error_description=auth_check_failed`;
+    }
+    const finalRedirectTo = `${redirectTo}${nextParam}${nextParam && reasonParam
+      ? reasonParam
+      : !nextParam && reasonParam
+        ? "?" + reasonParam.substring(1)
+        : ""
+      }`;
+
+    throw redirect(finalRedirectTo);
+  }
+
+  if (isDebug) {
+    console.info('[requireAuth] Authenticated! Returning authStatus.');
+  }
+  // Do NOT check for user presence — just return the auth status
+  return authStatus as Extract<AuthStatus, { status: "authenticated" }>;
+}--- app/hooks/useChatSessionMessages.ts ---
 // app/hooks/useChatSessionMessages.ts  
 import { useState, useEffect } from 'react';  
 import { Message } from '~/components/chat/MessageItem';  
@@ -879,7 +1041,7 @@ import { useLoaderData, useLocation, useParams } from "@remix-run/react";
 import { requireAuth } from "~/lib/auth.server";
 import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
 import type { Message } from "~/components/chat/MessageItem";
-import { API_HISTORY_URL_BASE } from "~/lib/ai-models";
+import { fetchWithHeaders, getApiUrl } from "~/lib/api.config"; // Import getApiUrl
 import { json, LoaderFunctionArgs } from "@remix-run/node";
 
 
@@ -898,10 +1060,12 @@ export async function loader({ request, params }: LoaderFunctionArgs): Promise<R
   }
 
   let messagesFromHistory: Message[] = [];
-  const historyUrl = `${API_HISTORY_URL_BASE.replace(/\/$/, '')}/${chatId}/history?limit=50`;
+  // Construct URL using getApiUrl and append dynamic parts
+  const baseHistoryUrl = getApiUrl('CHAT_HISTORY_BASE');
+  const historyUrl = `${baseHistoryUrl.replace(/\/$/, '')}/${chatId}/history?limit=50`;
 
   try {
-    const response = await fetch(historyUrl, {
+    const response = await fetchWithHeaders(historyUrl, {
       method: 'GET',
       headers: { 'Cookie': request.headers.get('Cookie') || '' },
     });
@@ -1150,7 +1314,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "~/component
 import { Button } from "~/components/ui/button";
 import { Separator } from "~/components/ui/separator";
 import { cn } from "~/lib/utils";
-import { getApiUrl } from "~/lib/api.config";
+import { getApiUrl, fetchWithHeaders } from "~/lib/api.config";
 import { useSidebar } from "./ui/sidebar";
 import { useSidebarChatHistory } from "./sidebar-chat-history-context";
 
@@ -1366,8 +1530,8 @@ export function SidebarNav({ mainNav }: SidebarNavProps) {
     setIsLoadingHistory(true);
     setErrorHistory(null);
     try {
-      const apiUrl = getApiUrl("CHAT_SESSION_LIST");
-      const response = await fetch(apiUrl, {
+      // const apiUrl = getApiUrl("CHAT_SESSION_LIST"); // No longer needed
+      const response = await fetchWithHeaders("CHAT_SESSION_LIST", {
         credentials: "include",
         headers: { "Accept": "application/json" }
       });
@@ -1650,7 +1814,15 @@ import { Button } from "~/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar";
 import { Separator } from "~/components/ui/separator";
 import { cn } from "~/lib/utils";
-import { getApiUrl } from "~/lib/api.config";
+import { getApiUrl, fetchWithHeaders } from "~/lib/api.config";
+import {
+  KRIVILAK_COOKIE_EMAIL,
+  KRIVILAK_COOKIE_DISPLAYNAME,
+  KRIVILAK_COOKIE_FIRSTNAME,
+  KRIVILAK_COOKIE_LASTNAME,
+  KRIVILAK_COOKIE_PROFILE_PIC_URL,
+  KRIVILAK_USER_COOKIE_NAMES,
+} from "~/lib/user-cookie-keys";
 
 interface User {
   name: string;
@@ -1668,11 +1840,11 @@ export function SidebarAccount(/*{ user, onLogout }: SidebarAccountProps*/) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    const email = Cookies.get("kwikon_ui_email") || "";
-    const displayName = Cookies.get("kwikon_ui_displayname");
-    const firstName = Cookies.get("kwikon_ui_firstname");
-    const lastName = Cookies.get("kwikon_ui_lastname");
-    const profilePictureUrl = Cookies.get("kwikon_ui_profilepictureurl") || "";
+    const email = Cookies.get(KRIVILAK_COOKIE_EMAIL) || "";
+    const displayName = Cookies.get(KRIVILAK_COOKIE_DISPLAYNAME);
+    const firstName = Cookies.get(KRIVILAK_COOKIE_FIRSTNAME);
+    const lastName = Cookies.get(KRIVILAK_COOKIE_LASTNAME);
+    const profilePictureUrl = Cookies.get(KRIVILAK_COOKIE_PROFILE_PIC_URL) || "";
 
     let name = "User";
     if (displayName) {
@@ -1703,8 +1875,8 @@ export function SidebarAccount(/*{ user, onLogout }: SidebarAccountProps*/) {
 
   const handleLogout = async () => {
     try {
-      const logoutUrl = getApiUrl("AUTH_LOGOUT");
-      await fetch(logoutUrl, {
+      // const logoutUrl = getApiUrl("AUTH_LOGOUT"); // No longer needed, fetchWithHeaders handles it
+      await fetchWithHeaders("AUTH_LOGOUT", {
         method: "POST",
         credentials: "include", // Important to send cookies
       });
@@ -1713,16 +1885,7 @@ export function SidebarAccount(/*{ user, onLogout }: SidebarAccountProps*/) {
       // Proceed with client-side cleanup even if API call fails
     } finally {
       // Clear all relevant cookies
-      const cookieNames = [
-        "kwikon_at",
-        "kwikon_rt",
-        "kwikon_ui_email",
-        "kwikon_ui_displayname",
-        "kwikon_ui_firstname",
-        "kwikon_ui_lastname",
-        "kwikon_ui_profilepictureurl",
-      ];
-      cookieNames.forEach((cookieName) => {
+      KRIVILAK_USER_COOKIE_NAMES.forEach((cookieName) => {
         Cookies.remove(cookieName, { path: "/" }); // Ensure path is correct if cookies were set with a specific path
       });
       // Redirect to login page
@@ -2010,9 +2173,14 @@ export function InitialGreeting() {
   );  
 }  --- app/components/chat/MessageItem.tsx ---
 // app/components/MessageItem.tsx
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, Fragment } from "react";
 import { Markdown } from "../Markdown";
-import { Check, Copy, Loader, MessageCircle } from "lucide-react";
+import { Check, Copy, Loader, MessageCircle, Sparkles, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "~/components/ui/collapsible";
 
 export interface Message {
   id: string;
@@ -2032,15 +2200,35 @@ export function MessageItem({ message }: MessageItemProps) {
 
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
-    if (contentBubbleRef.current) {
-      const textToCopy = message.content || "";
-      navigator.clipboard.writeText(textToCopy).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      });
-    }
+  const handleCopy = (textToCopy: string) => {
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
   };
+
+  const parseMessageContent = (content: string) => {
+    const parts = [];
+    let lastIndex = 0;
+    const regex = /<think>([\s\S]*?)<\/think>|<think>([\s\S]*?)<\/think>/gs;
+    let match;
+
+    while ((match = regex.exec(content)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push({ type: "text", content: content.substring(lastIndex, match.index) });
+      }
+      // Group 1 is for <think>, Group 2 is for <think>
+      const thinkContent = match[1] || match[2];
+      parts.push({ type: "think", content: thinkContent.trim() });
+      lastIndex = regex.lastIndex;
+    }
+
+    if (lastIndex < content.length) {
+      parts.push({ type: "text", content: content.substring(lastIndex) });
+    }
+    return parts;
+  };
+
 
   function AssistantIconRow() {
     return (
@@ -2096,12 +2284,23 @@ export function MessageItem({ message }: MessageItemProps) {
             overflowX: "auto",
           }}
         >
-          {message.content ? <Markdown>{message.content}</Markdown> : (isUser ? <span> </span> : null)}
+          {message.content ? (
+            parseMessageContent(message.content).map((part, index) => {
+              if (part.type === "think") {
+                return (
+                  <ThinkBlock key={index} content={part.content} />
+                );
+              }
+              return (
+                <Markdown key={index}>{part.content}</Markdown>
+              );
+            })
+          ) : (isUser ? <span> </span> : null)}
         </div>
-        {message.content && (
+        {message.content && !message.isLoading && (
           <div className={`flex mt-1 ${isUser ? "justify-end" : "justify-start"}`}>
             <button
-              onClick={handleCopy}
+              onClick={() => handleCopy(message.content)}
               className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted flex items-center gap-1 text-xs"
               aria-label={copied ? "Copied!" : "Copy message"}
             >
@@ -2122,12 +2321,45 @@ export function MessageItem({ message }: MessageItemProps) {
       </div>
     </div>
   );
+}
+
+interface ThinkBlockProps {
+  content: string;
+}
+
+function ThinkBlock({ content }: ThinkBlockProps) {
+  const [isOpen, setIsOpen] = useState(true); // Default to expanded
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className="my-2">
+      {/* Trigger button with its own background (white/dark gray) and shadow, always rounded */}
+      <CollapsibleTrigger
+        className={`flex items-center gap-2 p-2 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 text-sm font-medium focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none w-fit shadow rounded-md`}
+      >
+        <div className="flex items-center gap-2 text-slate-700 dark:text-slate-200">
+          <Sparkles className="w-4 h-4 text-purple-500" />
+          <span>Thinking...</span>
+        </div>
+        {isOpen ? <ChevronUp className="w-4 h-4 text-slate-500 dark:text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-500 dark:text-slate-400" />}
+      </CollapsibleTrigger>
+      
+      {/* Content area with its own background (white/dark gray), border, and shadow, appearing below the trigger */}
+      <CollapsibleContent className="mt-1 pt-2 pb-3 px-3 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-sm">
+        <div className="pl-3 border-l-2 border-purple-400 dark:border-purple-600 max-h-[300px] overflow-y-auto">
+          <div className="prose prose-sm max-w-full text-slate-600 dark:text-slate-400 [&_p]:text-sm">
+            <Markdown>{content}</Markdown>
+          </div>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
 }--- app/components/chat/streaming-chat-context.tsx ---
 // app/components/chat/streaming-chat-context.tsx
 import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
 import type { Message } from '~/components/chat/MessageItem';
 import type { AIModelConfig } from '~/lib/ai-models';
 import { API_STREAM_URL, defaultSystemPrompt } from '~/lib/ai-models';
+import { fetchWithHeaders } from '~/lib/api.config';
 
 interface StreamData {
   chatId?: string; // Backend might still send this, but we won't use it for session ID determination
@@ -2247,7 +2479,7 @@ export const StreamingChatProvider = ({ children }: { children: React.ReactNode 
       abortControllerRef.current = new AbortController();
 
       try {
-        const response = await fetch(API_STREAM_URL, {
+        const response = await fetchWithHeaders(API_STREAM_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
           body: JSON.stringify({

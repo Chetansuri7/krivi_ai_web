@@ -28,7 +28,7 @@ export default defineConfig({
     hmr: {  
       host: "localhost",  
     },  
-    allowedHosts: ["dev-chat.kwikon.club"],  
+    allowedHosts: ["dev-chat.krivilak.com"],
   },  
   preview: {  
     port: 5200,  

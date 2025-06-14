@@ -2200,5 +2200,5 @@ export const AImodels: AIModelConfig[] = [
 export const defaultModelConfig: AIModelConfig = AImodels.find(m => m.isDefault) || AImodels[0];
 
 export const defaultSystemPrompt = "You are a helpful assistant.";
-export const API_STREAM_URL = "https://api-chat.kwikon.club/api/chat/stream";
-export const API_HISTORY_URL_BASE = "https://api-chat.kwikon.club/api/chat/"; // e.g., append {chatId}/history
+export const API_STREAM_URL = "https://api-chat.krivilak.com/api/chat/stream";
+export const API_HISTORY_URL_BASE = "https://api-chat.krivilak.com/api/chat/"; // e.g., append {chatId}/history
