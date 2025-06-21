@@ -10,7 +10,7 @@ import {
 
 export interface Message {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system"; // Added "system"
   content: string;
   isLoading?: boolean;
 }

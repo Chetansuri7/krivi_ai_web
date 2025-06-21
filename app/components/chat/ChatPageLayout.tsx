@@ -82,23 +82,26 @@ export function ChatPageLayout({ initialChatIdFromLoader, initialMessagesProp }:
     resetManualScrollFlag();  
   }, [urlChatId, resetManualScrollFlag]);  
   
-  // UI event handlers  
-  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {  
-    e.preventDefault();  
-    if (  
-      input.trim() &&  
-      chatPhase === 'READY' &&  
-      !streamChat.isStreaming &&  
-      !isReactTransitionPending  
-    ) {  
-      handleSendMessage(input, selectedModel);  
-    }  
-  };  
+  // UI event handlers
+  const handleFormSubmit = (options: { thinkingEnabled?: boolean }) => {
+    // e.preventDefault(); // This is now handled in ChatInputBar.tsx
+    if (
+      input.trim() &&
+      chatPhase === 'READY' &&
+      !streamChat.isStreaming &&
+      !isReactTransitionPending
+    ) {
+      handleSendMessage(input, selectedModel, options); // Pass options through
+    }
+  };
   
-  const handlePromptSelect = (promptText: string) => {  
-    if (chatPhase === 'READY' && !streamChat.isStreaming && !isReactTransitionPending) {  
-      setInput(promptText);  
-      handleSendMessage(promptText, selectedModel);  
+  const handlePromptSelect = (promptText: string) => {
+    if (chatPhase === 'READY' && !streamChat.isStreaming && !isReactTransitionPending) {
+      setInput(promptText);
+      // For prompts selected from UI, thinking is likely not explicitly toggled,
+      // so we might send undefined or a default.
+      // Assuming default behavior (no thinking toggle explicitly set for these).
+      handleSendMessage(promptText, selectedModel, { thinkingEnabled: undefined });
     }  
   };  
   
@@ -171,11 +174,12 @@ export function ChatPageLayout({ initialChatIdFromLoader, initialMessagesProp }:
               isReactTransitionPending  
             }  
             availableModels={AImodels}  
-            selectedModel={selectedModel}  
-            onModelChange={handleModelChange}  
-          />  
-        </div>  
-      </div>  
+            selectedModel={selectedModel}
+            onModelChange={handleModelChange}
+            chatKey={chatModelKey} // Pass chatModelKey as chatKey prop
+          />
+        </div>
+      </div>
     </div>  
   );  
 }  

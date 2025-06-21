@@ -26,50 +26,52 @@ export function useChatSendMessage({
   setIsNewChatTransitioning: (v: boolean) => void,  
   chatModelKey: string  
 }) {  
-  return useCallback(  
-    async (inputTextValue: string, modelConfig: AIModelConfig) => {  
-      const trimmedInput = inputTextValue.trim();  
-      if (!trimmedInput || streamChat.isStreaming || isReactTransitionPending || chatPhase !== 'READY') {  
-        return;  
-      }  
-      setInput('');  
-      lastSelectedModelMapRef.current[chatModelKey] = modelConfig;  
+  return useCallback(
+    async (inputTextValue: string, modelConfig: AIModelConfig, options?: { thinkingEnabled?: boolean }) => {
+      const trimmedInput = inputTextValue.trim();
+      if (!trimmedInput || streamChat.isStreaming || isReactTransitionPending || chatPhase !== 'READY') {
+        return;
+      }
+      setInput('');
+      lastSelectedModelMapRef.current[chatModelKey] = modelConfig;
   
-      const userMessage: Message = {  
-        id: crypto.randomUUID(),  
-        role: 'user',  
-        content: trimmedInput,  
-      };  
+      const userMessage: Message = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: trimmedInput,
+      };
+      
+      const thinkingEnabled = options?.thinkingEnabled;
   
-      if (!urlChatId) {  
-        const newChatId = uuidv4();  
-        try {  
-          setIsNewChatTransitioning(true);  
-          streamChat.setMessagesForContext([userMessage], newChatId);  
-          const streamPromise = streamChat.startStream(trimmedInput, modelConfig, newChatId);  
-          setTimeout(() => {  
-            const destinationPath = `/chat/${newChatId}`;  
-            startReactTransition(() => {  
-              navigate(destinationPath, {  
-                replace: true,  
-                state: { initialMessages: [userMessage], fromNewChatFlow: true },  
-              });  
-            });  
-          }, 50);  
-          await streamPromise;  
-        } catch (error) {  
-          console.error('Error in new chat flow:', error);  
-          setIsNewChatTransitioning(false);  
-        }  
-      } else {  
-        try {  
-          streamChat.setMessagesForContext([...streamChat.messages, userMessage], urlChatId);  
-          await streamChat.startStream(trimmedInput, modelConfig, urlChatId);  
-        } catch (error) {  
-          console.error('Error in existing chat flow:', error);  
-        }  
-      }  
-    },  
+      if (!urlChatId) {
+        const newChatId = uuidv4();
+        try {
+          setIsNewChatTransitioning(true);
+          streamChat.setMessagesForContext([userMessage], newChatId);
+          const streamPromise = streamChat.startStream(trimmedInput, modelConfig, newChatId, thinkingEnabled);
+          setTimeout(() => {
+            const destinationPath = `/chat/${newChatId}`;
+            startReactTransition(() => {
+              navigate(destinationPath, {
+                replace: true,
+                state: { initialMessages: [userMessage], fromNewChatFlow: true },
+              });
+            });
+          }, 50);
+          await streamPromise;
+        } catch (error) {
+          console.error('Error in new chat flow:', error);
+          setIsNewChatTransitioning(false);
+        }
+      } else {
+        try {
+          streamChat.setMessagesForContext([...streamChat.messages, userMessage], urlChatId);
+          await streamChat.startStream(trimmedInput, modelConfig, urlChatId, thinkingEnabled);
+        } catch (error) {
+          console.error('Error in existing chat flow:', error);
+        }
+      }
+    },
     [  
       streamChat,  
       urlChatId,  

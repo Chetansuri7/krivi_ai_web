@@ -5,6 +5,7 @@ import { ChatPageLayout } from "~/components/chat/ChatPageLayout";
 import type { Message } from "~/components/chat/MessageItem";
 import { fetchWithHeaders, getApiUrl } from "~/lib/api.config"; // Import getApiUrl
 import { json, LoaderFunctionArgs } from "@remix-run/node";
+import { normalizeMessagesForUI } from "~/components/chat/streaming-chat-context";
 
 
 interface LoaderData {
@@ -35,12 +36,15 @@ export async function loader({ request, params }: LoaderFunctionArgs): Promise<R
     if (response.ok) {
       const data = await response.json();
       if (data.messages && Array.isArray(data.messages)) {
-        messagesFromHistory = data.messages.map((msg: any) => ({
-          id: msg.id || crypto.randomUUID(), 
-          role: msg.role, 
-          content: msg.content, 
+        // Preserve all fields including thought, query for normalization
+        const rawMessages = data.messages.map((msg: any) => ({
+          ...msg,
+          id: msg.id || crypto.randomUUID(),
+          role: msg.role,
+          content: msg.content,
           timestamp: msg.createdAt || msg.timestamp ? new Date(msg.createdAt || msg.timestamp).getTime() : undefined,
         }));
+        messagesFromHistory = normalizeMessagesForUI(rawMessages);
       }
     } else {
       console.error(`Failed to fetch chat history for ${chatId}: ${response.status} ${response.statusText}`);

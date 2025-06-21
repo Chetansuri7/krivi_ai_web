@@ -1,19 +1,23 @@
 // app/components/chat/ChatInputBar.tsx
-import React, { useRef, useEffect } from 'react';
-import { ArrowUp, Paperclip, Settings2 } from 'lucide-react';
+import React, { useRef, useEffect } from 'react'; // Removed useState
+import { ArrowUp, Paperclip, Settings2, Brain } from 'lucide-react'; // Added Brain
 import type { AIModelConfig } from '~/lib/ai-models';
 import { ModelSelector } from './ModelSelector'; // Import ModelSelector
+import { Switch } from '~/components/ui/switch';
+import { Label } from '~/components/ui/label';
+import { usePerChatThinkingToggle } from '~/hooks/usePerChatThinkingToggle'; // Import the new hook
 
 const isProbablyMobile = () => typeof window !== 'undefined' && window.innerWidth < 768;
 
 interface ChatInputBarProps {
   input: string;
   onInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
-  onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+  onSubmit: (options: { thinkingEnabled?: boolean }) => void; // Modified onSubmit
   isLoading: boolean;
   availableModels: AIModelConfig[];
   selectedModel: AIModelConfig;
   onModelChange: (model: AIModelConfig) => void;
+  chatKey: string; // Added chatKey prop
 }
 
 const MIN_TEXTAREA_HEIGHT_REM = 1.625;
@@ -28,8 +32,34 @@ export function ChatInputBar({
   availableModels,
   selectedModel,
   onModelChange,
+  chatKey, // Destructure chatKey
 }: ChatInputBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const defaultThinkingToggleState = selectedModel?.uiOptions?.thinkingToggleSettings?.defaultToggleState ?? false;
+  const { thinkingEnabled, handleThinkingToggleChange } = usePerChatThinkingToggle(
+    chatKey,
+    defaultThinkingToggleState
+  );
+
+  // Effect to potentially reset thinkingEnabled if the model changes and has a *different* default state
+  // and the toggle is shown. This ensures the hook's internal state aligns if the default changes.
+  useEffect(() => {
+    const newDefaultState = selectedModel?.uiOptions?.thinkingToggleSettings?.defaultToggleState ?? false;
+    // This effect primarily ensures that if the default state for a *newly selected model*
+    // differs, the hook gets a chance to re-evaluate its initial state based on that new default.
+    // The hook itself handles persistence, this is more about reacting to model changes.
+    // If the toggle is not shown, thinkingEnabled is effectively managed by the hook based on its last known state or default.
+    if (selectedModel?.uiOptions?.thinkingToggleSettings?.showToggle) {
+        // If the current thinkingEnabled state in the hook doesn't match the new default for the selected model,
+        // and the chatKey hasn't changed (meaning we are on the same chat but model changed),
+        // then we might want to update it. However, usePerChatThinkingToggle's own useEffect
+        // already listens to defaultToggleState changes. So, this explicit setThinkingEnabled might be redundant
+        // if the hook correctly re-initializes or updates based on defaultToggleState prop change.
+        // Let's rely on the hook's internal useEffect for defaultToggleState changes.
+    }
+  }, [selectedModel, chatKey, handleThinkingToggleChange]);
+
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -59,7 +89,12 @@ export function ChatInputBar({
   return (
     <div className="w-full flex-shrink-0">
       <form
-        onSubmit={onSubmit}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!isLoading && (input || '').trim()) {
+            onSubmit({ thinkingEnabled: selectedModel?.uiOptions?.thinkingToggleSettings ? thinkingEnabled : undefined });
+          }
+        }}
         className="relative mx-auto flex w-full flex-col rounded-xl bg-card p-2.5 shadow-xl ring-1 ring-border sm:p-3"
       >
         <textarea
@@ -85,6 +120,20 @@ export function ChatInputBar({
               onModelChange={onModelChange}
               disabled={isLoading || !availableModels || availableModels.length === 0}
             />
+            {selectedModel?.uiOptions?.thinkingToggleSettings?.showToggle && (
+              <div className="flex items-center space-x-2 ml-2">
+                <Switch
+                  id="thinking-toggle"
+                  checked={thinkingEnabled}
+                  onCheckedChange={handleThinkingToggleChange} // Use the handler from the hook
+                  disabled={isLoading}
+                />
+                <Label htmlFor="thinking-toggle" className="flex items-center text-sm text-primary cursor-pointer select-none">
+                  <Brain className="w-4 h-4 mr-1" />
+                  AI Thinking
+                </Label>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1 sm:gap-1.5">
             <button type="button" className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:opacity-50" disabled={true} title="Attach file (soon)">

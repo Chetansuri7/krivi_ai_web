@@ -35,6 +35,15 @@ export function isProbablyMobile(): boolean {
 // For client-side access in Remix + Vite, use VITE_ prefix for env vars
 // Make sure VITE_API_BASE_URL is defined in your .env file
 
+// Helper to get environment variables, works on client and server.
+// Expects VITE_ prefixed keys for client-side access via import.meta.env.
+const getEnv = (viteKey: string, defaultValue: string): string => {
+  const val = typeof window !== 'undefined'
+    ? (import.meta.env as any)[viteKey]    // Client-side (Vite)
+    : process.env[viteKey];               // Server-side (Node.js)
+  return val || defaultValue;
+};
+
 // Correctly access environment variables for client and server
 export const API_BASE_URL = typeof window !== 'undefined' // Check if running in browser
   ? import.meta.env.VITE_API_BASE_URL // Client-side (Vite)
@@ -46,6 +55,25 @@ if (!API_BASE_URL && typeof process !== 'undefined' && process.env.NODE_ENV !== 
     "WARNING: VITE_API_BASE_URL environment variable is not set. Please define it in your .env file (e.g., VITE_API_BASE_URL=https://your-api.com)."
   );
 }
+
+// Environment-specific application settings
+// Set these in your .env files (e.g., .env.development, .env.production).
+// Example for development (.env.development):
+// VITE_SUCCESS_REDIRECT_URI="https://dev-chat.krivilak.com/"
+// VITE_COOKIE_DOMAIN=".krivilak.com" (can be same for dev/prod or more specific for dev like "localhost")
+// VITE_GOOGLE_AUTH_REDIRECT_URI="https://api-dev-v0.krivilak.com/auth/google/callback"
+// VITE_TOKEN_ISSUER_URI="https://api-dev-v0.krivilak.com"
+//
+// Example for production (.env or .env.production):
+// VITE_SUCCESS_REDIRECT_URI="https://chat.krivilak.com/"
+// VITE_COOKIE_DOMAIN=".krivilak.com"
+// VITE_GOOGLE_AUTH_REDIRECT_URI="https://api.krivilak.com/auth/google/callback"
+// VITE_TOKEN_ISSUER_URI="https://api.krivilak.com"
+
+export const SUCCESS_REDIRECT_URI = getEnv("VITE_SUCCESS_REDIRECT_URI", "https://chat.krivilak.com/");
+export const COOKIE_DOMAIN = getEnv("VITE_COOKIE_DOMAIN", ".krivilak.com");
+export const GOOGLE_AUTH_REDIRECT_URI = getEnv("VITE_GOOGLE_AUTH_REDIRECT_URI", "https://api.krivilak.com/auth/google/callback");
+export const TOKEN_ISSUER_URI = getEnv("VITE_TOKEN_ISSUER_URI", "https://api.krivilak.com");
 
 export const API_ROUTES = {
   // Auth
@@ -192,21 +220,36 @@ export interface AIModelConfig {
   displayName: string;
   model: string;
   provider: string;
+  requestPayload: Record<string, any>; // Added for model-specific payloads
   isDefault?: boolean; // Optional: useful for selecting default
+  uiOptions?: { // For model-specific UI elements
+    thinkingToggleSettings?: {
+      enabledBudget: number;
+      disabledBudget: number;
+    };
+  };
 }
 
 // Import models from their respective files
-import { azureModels } from './model-list/azure-models';
-import { cerebrasModels } from './model-list/cerebras-models';
-import { googleModels } from './model-list/google-models';
+// import { azureModels } from './model-list/azure-models'; // Old import
+// import { googleModels } from './model-list/google-models'; // Old import
+import { cerebrasModels } from './model-list/cerebras-models'; // Keeping this as its structure hasn't changed
+
+// New model imports
+import { gemini25FlashPreview0520Model } from './model-list/google/gemini-2.5-flash-preview-05-20';
+import { gemini20FlashModel } from './model-list/google/gemini-2.0-flash';
+import { gpt41Model } from './model-list/azure/gpt-4.1';
 import { API_BASE_URL } from '~/lib/api.config'; // Import API_BASE_URL
 
 // If you add more providers, import them here
 
 // Combine all models into the main AImodels array
 export const AImodels: AIModelConfig[] = [
-  ...azureModels,
-  ...googleModels,
+  // ...azureModels, // Old spread
+  // ...googleModels, // Old spread
+  gpt41Model, // Add new Azure model
+  gemini25FlashPreview0520Model, // Add new Google model
+  gemini20FlashModel, // Add new Google model
   ...cerebrasModels,
   // Spread other imported model arrays here
   // Add more models here as needed (if they don't fit a provider category or are one-offs)
@@ -222,18 +265,44 @@ export const defaultSystemPrompt = "You are a helpful assistant.";
 // Use API_BASE_URL to construct these URLs
 export const API_STREAM_URL = API_BASE_URL ? `${API_BASE_URL}/api/chat/stream` : "/api/chat/stream";
 export const API_HISTORY_URL_BASE = API_BASE_URL ? `${API_BASE_URL}/api/chat` : "/api/chat"; // Note: path adjusted, specific endpoint like /:chatId/history will be appended by calling code--- app/lib/user-cookie-keys.ts ---
+// app/lib/user-cookie-keys.ts
 // Centralized user-related cookie keys for easy updates
-// Naming aligns with backend and curl example provided by user
+// Naming is now environment-aware.
 
-export const KRIVILAK_COOKIE_EMAIL = "krivilak_ui_email";
-export const KRIVILAK_COOKIE_DISPLAYNAME = "krivilak_ui_displayname";
-export const KRIVILAK_COOKIE_FIRSTNAME = "krivilak_ui_firstname";
-export const KRIVILAK_COOKIE_LASTNAME = "krivilak_ui_lastname";
-export const KRIVILAK_COOKIE_PROFILE_PIC_URL = "krivilak_ui_profilepictureurl";
-export const KRIVILAK_COOKIE_AT = "krivilak_at";
-export const KRIVILAK_COOKIE_RT = "krivilak_rt";
+// Helper to get environment variables, works on client and server.
+// Expects VITE_ prefixed keys for client-side access via import.meta.env.
+const getEnv = (viteKey: string, defaultValue: string): string => {
+  const val = typeof window !== 'undefined'
+    ? (import.meta.env as any)[viteKey]    // Client-side (Vite)
+    : process.env[viteKey];               // Server-side (Node.js)
+  return val || defaultValue;
+};
 
-// For easy iteration/cleanup
+// Define cookie names using environment variables with defaults for production.
+// Set these in your .env files (e.g., .env.development, .env.production).
+// Example for development (.env.development):
+// VITE_AUTH_COOKIE_NAME="dev_krivilak_at"
+// VITE_REFRESH_TOKEN_COOKIE_NAME="dev_krivilak_rt"
+// VITE_USER_INFO_COOKIE_PREFIX="dev_krivilak_ui_"
+//
+// Example for production (.env or .env.production):
+// VITE_AUTH_COOKIE_NAME="krivilak_at"
+// VITE_REFRESH_TOKEN_COOKIE_NAME="krivilak_rt"
+// VITE_USER_INFO_COOKIE_PREFIX="krivilak_ui_"
+
+export const KRIVILAK_COOKIE_AT = getEnv("VITE_AUTH_COOKIE_NAME", "krivilak_at");
+export const KRIVILAK_COOKIE_RT = getEnv("VITE_REFRESH_TOKEN_COOKIE_NAME", "krivilak_rt");
+
+const USER_INFO_COOKIE_PREFIX = getEnv("VITE_USER_INFO_COOKIE_PREFIX", "krivilak_ui_");
+
+export const KRIVILAK_COOKIE_EMAIL = `${USER_INFO_COOKIE_PREFIX}email`;
+export const KRIVILAK_COOKIE_DISPLAYNAME = `${USER_INFO_COOKIE_PREFIX}displayname`;
+export const KRIVILAK_COOKIE_FIRSTNAME = `${USER_INFO_COOKIE_PREFIX}firstname`;
+export const KRIVILAK_COOKIE_LASTNAME = `${USER_INFO_COOKIE_PREFIX}lastname`;
+export const KRIVILAK_COOKIE_PROFILE_PIC_URL = `${USER_INFO_COOKIE_PREFIX}profilepictureurl`;
+
+// For easy iteration/cleanup.
+// This array is dynamically populated based on the environment variables.
 export const KRIVILAK_USER_COOKIE_NAMES = [
   KRIVILAK_COOKIE_AT,
   KRIVILAK_COOKIE_RT,
@@ -242,17 +311,28 @@ export const KRIVILAK_USER_COOKIE_NAMES = [
   KRIVILAK_COOKIE_FIRSTNAME,
   KRIVILAK_COOKIE_LASTNAME,
   KRIVILAK_COOKIE_PROFILE_PIC_URL,
-];--- app/lib/model-list/azure-models.ts ---
-import type { AIModelConfig } from '../ai-models'; // Import the interface
+];--- app/lib/model-list/azure/gpt-4.1.ts ---
+import type { AIModelConfig } from '../../ai-models';
 
-export const azureModels: AIModelConfig[] = [
-  // {
-  //   displayName: "GPT-4o Mini",
-  //   model: "gpt-4o-mini",
-  //   provider: "azure",
-  //   isDefault: true,
-  // },
-];--- app/lib/model-list/cerebras-models.ts ---
+export const gpt41Model: AIModelConfig = {
+  displayName: "GPT-4.1", // Using the model name as display name, can be changed
+  model: "gpt-4.1",
+  provider: "azure",
+  // isDefault: true, // Set if this should be a default model
+  requestPayload: {
+    messages: [
+      {
+        role: "system",
+        content: "You are a helpful assistant."
+      },
+      {
+        role: "user",
+        content: "" // Placeholder for user content
+      }
+    ]
+    // executionParameters: {} // As per the user's example, though this might be part of a different config
+  }
+};--- app/lib/model-list/cerebras-models.ts ---
 import type { AIModelConfig } from '../ai-models'; // Import the interface
 
 export const cerebrasModels: AIModelConfig[] = [
@@ -266,24 +346,64 @@ export const cerebrasModels: AIModelConfig[] = [
     model: "qwen-3-32b",
     provider: "cerebras",
   },
-];--- app/lib/model-list/google-models.ts ---
-import type { AIModelConfig } from '../ai-models'; // Import the interface
+];--- app/lib/model-list/google/gemini-2.0-flash.ts ---
+import type { AIModelConfig } from '../../ai-models';
 
-export const googleModels: AIModelConfig[] = [
-  {
-    displayName: "Gemini 2.5 flash",
-    model: "gemini-2.5-flash-preview-04-17",
-    provider: "google",
-    isDefault: true,
-  },
-  {
-    displayName: "Gemini 2.0 flash",
-    model: "gemini-2.0-flash",
-    provider: "google",
-    
+export const gemini20FlashModel: AIModelConfig = {
+  displayName: "Gemini 2.0 flash",
+  model: "gemini-2.0-flash",
+  provider: "google",
+  // isDefault: false, // Assuming the other one is default
+  requestPayload: {
+    messages: [
+      {
+        role: "system",
+        content: "You are a helpful assistant."
+      },
+      {
+        role: "user",
+        content: "" // Placeholder for user content
+      }
+    ]
+    // Add model-specific generationConfig if different from the other gemini model
+    // For example:
+    // generationConfig: {
+    //   temperature: 0.8
+    // }
+  }
+};--- app/lib/model-list/google/gemini-2.5-flash-preview-05-20.ts ---
+import type { AIModelConfig } from '../../ai-models';
 
+export const gemini25FlashPreview0520Model: AIModelConfig = {
+  displayName: "Gemini 2.5 flash",
+  model: "gemini-2.5-flash-preview-05-20", // Updated model name from example
+  provider: "google",
+  isDefault: true,
+  requestPayload: {
+    messages: [
+      // Default messages structure, can be overridden
+      {
+        role: "system",
+        content: "You are a helpful assistant."
+      },
+      {
+        role: "user",
+        content: "" // Placeholder for user content
+      }
+    ],
+    generationConfig: {
+      thinkingConfig: {
+        thinkingBudget: 0 // Default to 0, will be controlled by UI toggle
+      }
+    }
   },
-];--- app/lib/auth.server.ts ---
+  uiOptions: {
+    thinkingToggleSettings: {
+      enabledBudget: 24576,
+      disabledBudget: 0
+    }
+  }
+};--- app/lib/auth.server.ts ---
 // app/lib/auth.server.ts
 import { redirect } from "@remix-run/node";
 import { getApiUrl, API_ROUTES, fetchWithHeaders } from "./api.config";
@@ -352,43 +472,46 @@ export async function checkAuth(request: Request): Promise<AuthStatus> {
   }
 }
 
-export async function refreshTokens(request: Request): Promise<{ ok: boolean; setCookieHeader?: string | null }> {
+export async function refreshTokens(request: Request): Promise<{ ok: boolean; setCookieHeaders?: string[] | null }> {
   try {
     const response = await fetchWithHeaders("AUTH_REFRESH", {
       method: "POST",
       headers: {
         cookie: request.headers.get("cookie") ?? "",
+        'X-Client-Platform': 'Web', // As per user feedback, ensure this header if backend expects it
       },
       credentials: "include",
     });
 
-    const setCookieHeader = response.headers.get("set-cookie");
+    const setCookieHeaders = response.headers.getSetCookie(); // Correct method for Remix/Node.js
 
     if (!response.ok) {
       const errorBody = await response.text();
       console.warn("Refresh token request failed:", response.status, errorBody);
-      return { ok: false, setCookieHeader };
+      // Still return headers, backend might clear cookies on failure
+      return { ok: false, setCookieHeaders: setCookieHeaders.length > 0 ? setCookieHeaders : null };
     }
 
     const data = await response.json();
     // Assuming backend returns a success status or specific message
     if (data.status === "Success" || data.message?.includes("refreshed") || data.ok === true || response.status === 200) {
-      return { ok: true, setCookieHeader };
+      return { ok: true, setCookieHeaders };
     } else {
       console.warn("Refresh token API call was not successful according to response body:", data);
-      return { ok: false, setCookieHeader };
+      return { ok: false, setCookieHeaders: setCookieHeaders.length > 0 ? setCookieHeaders : null };
     }
   } catch (error) {
     console.error("Error during refreshTokens:", error);
-    return { ok: false };
+    return { ok: false, setCookieHeaders: null };
   }
 }
 
-export async function requireAuth(  
-  request: Request,  
-  redirectTo: string = "/login"  
-): Promise<Extract<AuthStatus, { status: "authenticated" }>> {  
+export async function requireAuth(
+  request: Request,
+  redirectTo: string = "/login"
+): Promise<Extract<AuthStatus, { status: "authenticated" }>> {
   const isDebug = typeof process !== 'undefined' && process.env.NODE_ENV !== 'production';
+  const responseHeaders = new Headers(); // To accumulate Set-Cookie headers
 
   let authStatus = await checkAuth(request);
 
@@ -400,22 +523,37 @@ export async function requireAuth(
     if (isDebug) {
       console.warn('[requireAuth] status=refresh_required, attempting refresh...');
     }
-    const { ok } = await refreshTokens(request);
+    const { ok, setCookieHeaders } = await refreshTokens(request);
     if (isDebug) {
-      console.info('[requireAuth] /auth/refresh result:', ok);
+      console.info('[requireAuth] /auth/refresh result:', ok, 'Cookies to set:', setCookieHeaders);
     }
-    if (ok) {
-      authStatus = await checkAuth(request);
+
+    if (ok && setCookieHeaders && setCookieHeaders.length > 0) {
+      setCookieHeaders.forEach(cookie => responseHeaders.append("Set-Cookie", cookie));
       if (isDebug) {
-        console.info('[requireAuth] /auth/check after refresh:', authStatus);
+        console.info('[requireAuth] Refresh successful. Redirecting to URL:', request.url, 'with new Set-Cookie headers.');
+      }
+      // CRITICAL STEP: Redirect to the current URL to apply new cookies.
+      throw redirect(request.url, { headers: responseHeaders });
+    } else {
+      // REFRESH FAILED or no cookies returned:
+      if (isDebug) {
+        console.warn('[requireAuth] Refresh failed or no new cookies set. Re-checking auth status...');
+      }
+      // If refresh call itself returned cookies (e.g. to clear them), add them.
+      if (setCookieHeaders && setCookieHeaders.length > 0) {
+        setCookieHeaders.forEach(cookie => responseHeaders.append("Set-Cookie", cookie));
+      }
+      authStatus = await checkAuth(request); // Re-check with (likely old) cookies
+      if (isDebug) {
+        console.info('[requireAuth] /auth/check after failed/no-cookie refresh:', authStatus);
       }
     }
-    // If refresh failed, fall through and handle as unauthenticated.
   }
 
   if (!isAuthenticated(authStatus)) {
     if (isDebug) {
-      console.warn('[requireAuth] Not authenticated after all checks, redirecting to login.', authStatus);
+      console.warn('[requireAuth] Not authenticated after all checks. Redirecting to login. Status:', authStatus);
     }
     const currentPath = new URL(request.url).pathname;
     const currentSearch = new URL(request.url).search;
@@ -424,34 +562,32 @@ export async function requireAuth(
         ? `?next=${encodeURIComponent(currentPath + currentSearch)}`
         : "";
     let reasonParam = "";
-    if (
-      authStatus.status === "login_required" &&
-      authStatus.reason
-    ) {
-      reasonParam = `&error_description=${encodeURIComponent(
-        authStatus.reason
-      )}`;
-    } else if (authStatus.status === "error" && authStatus.reason) {
-      reasonParam = `&error_description=${encodeURIComponent(
-        authStatus.reason
-      )}`;
+    if (authStatus.status === "login_required") { // authStatus.reason is guaranteed by type
+      reasonParam = `&error_description=${encodeURIComponent(authStatus.reason)}`;
     } else if (authStatus.status === "error") {
-      reasonParam = `&error_description=auth_check_failed`;
+      if (authStatus.reason) {
+        reasonParam = `&error_description=${encodeURIComponent(authStatus.reason)}`;
+      } else {
+        reasonParam = `&error_description=auth_check_error_unknown_reason`;
+      }
+    } else { // Fallback for any other unauthenticated status not explicitly handled above
+      reasonParam = `&error_description=auth_failed_unspecified_reason`;
     }
-    const finalRedirectTo = `${redirectTo}${nextParam}${nextParam && reasonParam
-      ? reasonParam
-      : !nextParam && reasonParam
-        ? "?" + reasonParam.substring(1)
-        : ""
-      }`;
-
-    throw redirect(finalRedirectTo);
+    
+    const finalRedirectTo = `${redirectTo}${nextParam}${nextParam && reasonParam ? reasonParam : !nextParam && reasonParam ? "?" + reasonParam.substring(1) : ""}`;
+    
+    // Pass any accumulated Set-Cookie headers (e.g., from a failed refresh that clears cookies)
+    throw redirect(finalRedirectTo, { headers: responseHeaders });
   }
 
   if (isDebug) {
-    console.info('[requireAuth] Authenticated! Returning authStatus.');
+    console.info('[requireAuth] Authenticated! User:', authStatus.user);
   }
-  // Do NOT check for user presence — just return the auth status
+  // If loader needs to return data with headers: return json({ user: authStatus.user }, { headers: responseHeaders });
+  // For now, just return authStatus. If responseHeaders has Set-Cookie from a successful refresh
+  // that somehow didn't redirect (which shouldn't happen with the logic above),
+  // those cookies won't be applied to the client by returning authStatus directly without headers.
+  // The redirect is the primary mechanism.
   return authStatus as Extract<AuthStatus, { status: "authenticated" }>;
 }--- app/hooks/useChatSessionMessages.ts ---
 // app/hooks/useChatSessionMessages.ts  
@@ -603,50 +739,52 @@ export function useChatSendMessage({
   setIsNewChatTransitioning: (v: boolean) => void,  
   chatModelKey: string  
 }) {  
-  return useCallback(  
-    async (inputTextValue: string, modelConfig: AIModelConfig) => {  
-      const trimmedInput = inputTextValue.trim();  
-      if (!trimmedInput || streamChat.isStreaming || isReactTransitionPending || chatPhase !== 'READY') {  
-        return;  
-      }  
-      setInput('');  
-      lastSelectedModelMapRef.current[chatModelKey] = modelConfig;  
+  return useCallback(
+    async (inputTextValue: string, modelConfig: AIModelConfig, options?: { thinkingEnabled?: boolean }) => {
+      const trimmedInput = inputTextValue.trim();
+      if (!trimmedInput || streamChat.isStreaming || isReactTransitionPending || chatPhase !== 'READY') {
+        return;
+      }
+      setInput('');
+      lastSelectedModelMapRef.current[chatModelKey] = modelConfig;
   
-      const userMessage: Message = {  
-        id: crypto.randomUUID(),  
-        role: 'user',  
-        content: trimmedInput,  
-      };  
+      const userMessage: Message = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: trimmedInput,
+      };
+      
+      const thinkingEnabled = options?.thinkingEnabled;
   
-      if (!urlChatId) {  
-        const newChatId = uuidv4();  
-        try {  
-          setIsNewChatTransitioning(true);  
-          streamChat.setMessagesForContext([userMessage], newChatId);  
-          const streamPromise = streamChat.startStream(trimmedInput, modelConfig, newChatId);  
-          setTimeout(() => {  
-            const destinationPath = `/chat/${newChatId}`;  
-            startReactTransition(() => {  
-              navigate(destinationPath, {  
-                replace: true,  
-                state: { initialMessages: [userMessage], fromNewChatFlow: true },  
-              });  
-            });  
-          }, 50);  
-          await streamPromise;  
-        } catch (error) {  
-          console.error('Error in new chat flow:', error);  
-          setIsNewChatTransitioning(false);  
-        }  
-      } else {  
-        try {  
-          streamChat.setMessagesForContext([...streamChat.messages, userMessage], urlChatId);  
-          await streamChat.startStream(trimmedInput, modelConfig, urlChatId);  
-        } catch (error) {  
-          console.error('Error in existing chat flow:', error);  
-        }  
-      }  
-    },  
+      if (!urlChatId) {
+        const newChatId = uuidv4();
+        try {
+          setIsNewChatTransitioning(true);
+          streamChat.setMessagesForContext([userMessage], newChatId);
+          const streamPromise = streamChat.startStream(trimmedInput, modelConfig, newChatId, thinkingEnabled);
+          setTimeout(() => {
+            const destinationPath = `/chat/${newChatId}`;
+            startReactTransition(() => {
+              navigate(destinationPath, {
+                replace: true,
+                state: { initialMessages: [userMessage], fromNewChatFlow: true },
+              });
+            });
+          }, 50);
+          await streamPromise;
+        } catch (error) {
+          console.error('Error in new chat flow:', error);
+          setIsNewChatTransitioning(false);
+        }
+      } else {
+        try {
+          streamChat.setMessagesForContext([...streamChat.messages, userMessage], urlChatId);
+          await streamChat.startStream(trimmedInput, modelConfig, urlChatId, thinkingEnabled);
+        } catch (error) {
+          console.error('Error in existing chat flow:', error);
+        }
+      }
+    },
     [  
       streamChat,  
       urlChatId,  
@@ -2019,23 +2157,25 @@ export function ModelSelector({
         ))}
       </select>
       <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1.5 text-muted-foreground">
-        <FileDownIcon className="h-3.5 w-3.5" />
+        <ChevronDownIcon className="h-4 w-4" /> {/* Changed icon and slightly increased size */}
       </div>
     </div>
   );
 }--- app/components/chat/ChatInputBar.tsx ---
 // app/components/chat/ChatInputBar.tsx
-import React, { useRef, useEffect } from 'react';
-import { ArrowUp, Paperclip, Settings2 } from 'lucide-react';
+import React, { useRef, useEffect, useState } from 'react';
+import { ArrowUp, Paperclip, Settings2, Brain } from 'lucide-react'; // Added Brain
 import type { AIModelConfig } from '~/lib/ai-models';
 import { ModelSelector } from './ModelSelector'; // Import ModelSelector
+import { Switch } from '~/components/ui/switch';
+import { Label } from '~/components/ui/label';
 
 const isProbablyMobile = () => typeof window !== 'undefined' && window.innerWidth < 768;
 
 interface ChatInputBarProps {
   input: string;
   onInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
-  onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+  onSubmit: (options: { thinkingEnabled?: boolean }) => void; // Modified onSubmit
   isLoading: boolean;
   availableModels: AIModelConfig[];
   selectedModel: AIModelConfig;
@@ -2056,6 +2196,14 @@ export function ChatInputBar({
   onModelChange,
 }: ChatInputBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
+
+  useEffect(() => {
+    // Reset thinking toggle if model changes and doesn't support it
+    if (!selectedModel?.uiOptions?.thinkingToggleSettings) {
+      setThinkingEnabled(false);
+    }
+  }, [selectedModel]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -2085,7 +2233,12 @@ export function ChatInputBar({
   return (
     <div className="w-full flex-shrink-0">
       <form
-        onSubmit={onSubmit}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!isLoading && (input || '').trim()) {
+            onSubmit({ thinkingEnabled: selectedModel?.uiOptions?.thinkingToggleSettings ? thinkingEnabled : undefined });
+          }
+        }}
         className="relative mx-auto flex w-full flex-col rounded-xl bg-card p-2.5 shadow-xl ring-1 ring-border sm:p-3"
       >
         <textarea
@@ -2111,6 +2264,20 @@ export function ChatInputBar({
               onModelChange={onModelChange}
               disabled={isLoading || !availableModels || availableModels.length === 0}
             />
+            {selectedModel?.uiOptions?.thinkingToggleSettings && (
+              <div className="flex items-center space-x-2 ml-2">
+                <Switch
+                  id="thinking-toggle"
+                  checked={thinkingEnabled}
+                  onCheckedChange={setThinkingEnabled}
+                  disabled={isLoading}
+                />
+                <Label htmlFor="thinking-toggle" className="flex items-center text-sm text-primary cursor-pointer select-none">
+                  <Brain className="w-4 h-4 mr-1" />
+                  AI Thinking
+                </Label>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-1 sm:gap-1.5">
             <button type="button" className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:opacity-50" disabled={true} title="Attach file (soon)">
@@ -2184,7 +2351,7 @@ import {
 
 export interface Message {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system"; // Added "system"
   content: string;
   isLoading?: boolean;
 }
@@ -2378,6 +2545,7 @@ export interface StreamingChatContextType {
     prompt: string,
     modelConfig: AIModelConfig,
     chatIdToStream: string, // Authoritative Chat ID for this stream
+    thinkingEnabled?: boolean, // Added thinkingEnabled
   ) => Promise<void>; // No longer returns a chatId, as frontend dictates it
   abortStream: (reason?: string) => void;
   setMessagesForContext: (messages: Message[], uiFocusedChatId: string | null) => void;
@@ -2457,6 +2625,7 @@ export const StreamingChatProvider = ({ children }: { children: React.ReactNode 
       prompt: string,
       modelConfig: AIModelConfig,
       chatIdToStream: string, // Authoritative Chat ID (frontend-generated for new)
+      thinkingEnabled?: boolean, // Added thinkingEnabled
     ): Promise<void> => {
       if (isStreaming && abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
         console.warn("Context: Stream already in progress. Aborting previous to start new one.");
@@ -2482,13 +2651,65 @@ export const StreamingChatProvider = ({ children }: { children: React.ReactNode 
         const response = await fetchWithHeaders(API_STREAM_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-          body: JSON.stringify({
-            chatId: chatIdToStream, // Send the authoritative chatId
-            message: prompt,
-            provider: modelConfig.provider,
-            model: modelConfig.model,
-            systemPrompt: defaultSystemPrompt,
-          }),
+          body: JSON.stringify((() => {
+            const modelId = modelConfig.model; // Use modelId as key, value from modelConfig.model
+            const provider = modelConfig.provider;
+
+            // Initialize messages array for the payload
+            let messagesForPayload: Array<{role: string, content: string}> = [];
+
+            // Start with messages from modelConfig.requestPayload if they exist, mapping to {role, content}
+            // This ensures any pre-defined messages (like a specific system prompt from model config) are included.
+            if (modelConfig.requestPayload && Array.isArray(modelConfig.requestPayload.messages)) {
+                messagesForPayload = modelConfig.requestPayload.messages.map((m: any) => ({
+                    role: m.role,
+                    content: m.content
+                })).filter((m: any) => typeof m.role === 'string' && typeof m.content === 'string'); // Ensure valid messages
+            }
+
+            // Add or Update user message (current input 'prompt')
+            // If a 'user' message already exists (e.g. from modelConfig.requestPayload.messages), update its content.
+            // Otherwise, add the new user message.
+            let userMessageFound = false;
+            messagesForPayload = messagesForPayload.map(m => {
+                if (m.role === 'user') {
+                    userMessageFound = true;
+                    return { ...m, content: prompt };
+                }
+                return m;
+            });
+            if (!userMessageFound) {
+                messagesForPayload.push({ role: 'user', content: prompt });
+            }
+
+            // Add or Update system message (using defaultSystemPrompt)
+            // If a 'system' message exists (e.g. from modelConfig.requestPayload.messages) and its content is empty,
+            // and defaultSystemPrompt is defined, fill the content.
+            // If no 'system' message exists and defaultSystemPrompt is defined, add it (typically at the beginning).
+            let systemMessageFound = false;
+            messagesForPayload = messagesForPayload.map(m => {
+                if (m.role === 'system') {
+                    systemMessageFound = true;
+                    if (!m.content && defaultSystemPrompt) {
+                        return { ...m, content: defaultSystemPrompt };
+                    }
+                }
+                return m;
+            });
+            if (!systemMessageFound && defaultSystemPrompt) {
+                messagesForPayload.unshift({ role: 'system', content: defaultSystemPrompt });
+            }
+            
+            // Final filter to ensure all messages in the payload have a role and string content.
+            messagesForPayload = messagesForPayload.filter(m => m.role && typeof m.content === 'string');
+
+            return {
+              chatId: chatIdToStream,
+              provider: provider,
+              modelId: modelId, // Key is now modelId
+              messages: messagesForPayload, // Messages array is top-level
+            };
+          })()),
           signal: abortControllerRef.current.signal,
           credentials: 'include',
         });
@@ -2749,23 +2970,26 @@ export function ChatPageLayout({ initialChatIdFromLoader, initialMessagesProp }:
     resetManualScrollFlag();  
   }, [urlChatId, resetManualScrollFlag]);  
   
-  // UI event handlers  
-  const handleFormSubmit = (e: React.FormEvent<HTMLFormElement>) => {  
-    e.preventDefault();  
-    if (  
-      input.trim() &&  
-      chatPhase === 'READY' &&  
-      !streamChat.isStreaming &&  
-      !isReactTransitionPending  
-    ) {  
-      handleSendMessage(input, selectedModel);  
-    }  
-  };  
+  // UI event handlers
+  const handleFormSubmit = (options: { thinkingEnabled?: boolean }) => {
+    // e.preventDefault(); // This is now handled in ChatInputBar.tsx
+    if (
+      input.trim() &&
+      chatPhase === 'READY' &&
+      !streamChat.isStreaming &&
+      !isReactTransitionPending
+    ) {
+      handleSendMessage(input, selectedModel, options); // Pass options through
+    }
+  };
   
-  const handlePromptSelect = (promptText: string) => {  
-    if (chatPhase === 'READY' && !streamChat.isStreaming && !isReactTransitionPending) {  
-      setInput(promptText);  
-      handleSendMessage(promptText, selectedModel);  
+  const handlePromptSelect = (promptText: string) => {
+    if (chatPhase === 'READY' && !streamChat.isStreaming && !isReactTransitionPending) {
+      setInput(promptText);
+      // For prompts selected from UI, thinking is likely not explicitly toggled,
+      // so we might send undefined or a default.
+      // Assuming default behavior (no thinking toggle explicitly set for these).
+      handleSendMessage(promptText, selectedModel, { thinkingEnabled: undefined });
     }  
   };  
   

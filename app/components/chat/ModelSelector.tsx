@@ -48,7 +48,7 @@ export function ModelSelector({
         ))}
       </select>
       <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1.5 text-muted-foreground">
-        <FileDownIcon className="h-3.5 w-3.5" />
+        <ChevronDownIcon className="h-4 w-4" /> {/* Changed icon and slightly increased size */}
       </div>
     </div>
   );
