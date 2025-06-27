@@ -129,7 +129,6 @@ export function ChatInputBar({
                   disabled={isLoading}
                 />
                 <Label htmlFor="thinking-toggle" className="flex items-center text-sm text-primary cursor-pointer select-none">
-                  <Brain className="w-4 h-4 mr-1" />
                   AI Thinking
                 </Label>
               </div>

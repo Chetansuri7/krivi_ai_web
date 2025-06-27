@@ -2,6 +2,7 @@ import type { AIModelConfig } from '../../ai-models';
 
 export const gemini20FlashLiteModel: AIModelConfig = {
   displayName: "Gemini 2.0 flash Lite",
+  shortName: "2.0 Flash Lite",
   model: "gemini-2.0-flash-lite-001",
   provider: "google",
   isDefault: false,

@@ -2,6 +2,7 @@ import type { AIModelConfig } from '../../ai-models';
 
 export const gemini25ProPreview0506Model: AIModelConfig = {
   displayName: "Gemini 2.5 Pro",
+  shortName: "2.5 Pro",
   model: "gemini-2.5-pro-preview-05-06",
   provider: "google",
   isDefault: false,

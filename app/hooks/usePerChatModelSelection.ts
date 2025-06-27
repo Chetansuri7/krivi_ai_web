@@ -23,3 +23,10 @@ export function usePerChatModelSelection(chatKey: string, defaultModel: AIModelC
 
   return { selectedModel, handleModelChange };
 }
+
+// Function to allow pre-setting a model for a specific chat key
+export function primeChatModelSelection(chatKey: string, model: AIModelConfig) {
+  if (chatKey && model) {
+    chatModelSelectionsStore[chatKey] = model;
+  }
+}

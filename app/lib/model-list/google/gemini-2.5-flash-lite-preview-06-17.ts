@@ -2,9 +2,10 @@ import type { AIModelConfig } from '../../ai-models';
 
 export const gemini25FlashLitePreview0617Model: AIModelConfig = {
   displayName: "Gemini 2.5 Flash Lite",
+  shortName: "2.5 Flash Lite",
   model: "gemini-2.5-flash-lite-preview-06-17",
   provider: "google",
-  isDefault: false, 
+  isDefault: false,
   requestPayload: {
     messages: [
       {

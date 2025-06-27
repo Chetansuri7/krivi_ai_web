@@ -1,9 +1,10 @@
 import { useCallback } from 'react';  
-import { v4 as uuidv4 } from 'uuid';  
+import { v4 as uuidv4 } from 'uuid';
 import { Message } from '~/components/chat/MessageItem';
-import type { AIModelConfig } from '~/lib/ai-models';  
+import type { AIModelConfig } from '~/lib/ai-models';
+import { primeChatModelSelection } from '~/hooks/usePerChatModelSelection'; // Added import
   
-export function useChatSendMessage({  
+export function useChatSendMessage({
   streamChat,  
   urlChatId,  
   lastSelectedModelMapRef,  
@@ -45,6 +46,8 @@ export function useChatSendMessage({
   
       if (!urlChatId) {
         const newChatId = uuidv4();
+        // Prime the model selection for the new chat ID
+        primeChatModelSelection(newChatId, modelConfig);
         try {
           setIsNewChatTransitioning(true);
           streamChat.setMessagesForContext([userMessage], newChatId);

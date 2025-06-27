@@ -1,6 +1,11 @@
 // app/lib/ai-models.ts
 export interface AIModelConfig {
   displayName: string;
+  /**
+   * For smaller screens, if defined, this will be shown instead of displayName.
+   * Should be as unique as possible among available models.
+   */
+  shortName?: string;
   model: string;
   provider: string;
   requestPayload: Record<string, any>; // Added for model-specific payloads
@@ -39,7 +44,7 @@ import { gemini25FlashLitePreview0617Model } from './model-list/google/gemini-2.
 export const AImodels: AIModelConfig[] = [
   // ...azureModels, // Old spread
   // ...googleModels, // Old spread
-  gpt41Model, // Add new Azure model
+  gpt41Model, // No shortName override here
   gemini25ProPreview0506Model,
   gemini25FlashPreview0520Model,
   gemini25FlashLitePreview0617Model,
