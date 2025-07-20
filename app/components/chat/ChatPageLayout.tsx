@@ -80,7 +80,50 @@ export function ChatPageLayout({ initialChatIdFromLoader, initialMessagesProp }:
   
   useEffect(() => {  
     resetManualScrollFlag();  
-  }, [urlChatId, resetManualScrollFlag]);  
+  }, [urlChatId, resetManualScrollFlag]);
+
+  // Auto-trigger assistant stream if landed on page with only user message and not streaming
+  useEffect(() => {
+    // Basic guards
+    if (
+      chatPhase !== 'READY' ||
+      !urlChatId ||
+      !selectedModel ||
+      streamChat.isStreaming ||
+      isReactTransitionPending ||
+      remixNavigation.state !== 'idle'
+    ) {
+      return;
+    }
+    // EXTRA GUARD: Prevent duplicate streams for same chatId during route transitions/remounts
+    if (streamChat.activeStreamChatId === urlChatId) {
+      // Already streaming for this chatId, don't trigger another
+      return;
+    }
+    // Check if exactly one message and it is from user
+    if (
+      Array.isArray(streamChat.messages) &&
+      streamChat.messages.length === 1 &&
+      streamChat.messages[0].role === 'user'
+    ) {
+      // No assistant message yet, auto trigger the stream
+      streamChat.startStream(
+        streamChat.messages[0].content,
+        selectedModel,
+        urlChatId
+      );
+    }
+  }, [
+    chatPhase,
+    urlChatId,
+    selectedModel,
+    streamChat.isStreaming,
+    streamChat.activeStreamChatId, // <-- depend on this
+    streamChat.messages,
+    isReactTransitionPending,
+    remixNavigation.state,
+    streamChat,
+  ]);
   
   // UI event handlers
   const handleFormSubmit = (options: { thinkingEnabled?: boolean }) => {

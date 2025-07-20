@@ -5,6 +5,7 @@ export const gpt41Model: AIModelConfig = {
   shortName: "GPT-4.1",
   model: "gpt-4.1",
   provider: "azure",
+  is_active_model: true,
   // isDefault: true, // Set if this should be a default model
   requestPayload: {
     messages: [

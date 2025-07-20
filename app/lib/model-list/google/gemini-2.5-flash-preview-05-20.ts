@@ -5,7 +5,8 @@ export const gemini25FlashPreview0520Model: AIModelConfig = {
   shortName: "2.5 Flash",
   model: "gemini-2.5-flash-preview-05-20", // Updated model name from example
   provider: "google",
-  isDefault: true,
+  is_active_model: false,
+  isDefault: false,
   requestPayload: {
     messages: [
       // Default messages structure, can be overridden

@@ -35,9 +35,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   if (isRefreshable(authStatus)) {
     console.log("[Login Loader] Token refresh required. Attempting refresh...");
-    const { ok, setCookieHeader } = await refreshTokens(request);
-    if (ok && setCookieHeader) {
-      responseHeaders.append("Set-Cookie", setCookieHeader);
+    const { ok, setCookieHeaders } = await refreshTokens(request);
+    if (ok && setCookieHeaders && Array.isArray(setCookieHeaders)) {
+      for (const cookie of setCookieHeaders) {
+        responseHeaders.append("Set-Cookie", cookie);
+      }
       const destination = url.pathname + url.search;
       console.log(`[Login Loader] Refresh successful. Redirecting to ${destination} to apply new cookies.`);
       throw redirect(destination, { headers: responseHeaders });
@@ -90,45 +92,50 @@ export default function LoginPage() {
   // Otherwise, errorReason will be an empty string, suppressing generic/unknown errors.
   const errorReason = determinedErrorKey ? (LOGIN_SPECIFIC_ERROR_MESSAGES[determinedErrorKey] ?? "") : "";
   
-  return (  
-    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-12">  
-      <Card className="w-full max-w-md shadow-xl">  
-        <CardHeader className="text-center">  
-          <CardTitle className="text-3xl font-bold tracking-tight text-primary">  
-            Access Your Account  
-          </CardTitle>  
-          <CardDescription className="text-muted-foreground pt-2">  
-            Continue with Google to securely sign in.  
-          </CardDescription>  
-        </CardHeader>  
-        <CardContent className="space-y-6 pt-6">  
-          {errorReason && (  
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-center text-sm text-destructive">  
-              <p>{errorReason}</p>  
-            </div>  
-          )}  
-          {displayMessage && !errorReason && (  
-            <div className="rounded-md border border-primary/50 bg-primary/10 p-3 text-center text-sm text-primary">  
-              <p>{displayMessage}</p>  
-            </div>  
-          )}  
-          <Button  
-            asChild  
-            size={isMobile ? "lg" : "lg"}  
-            className="w-full bg-primary text-primary-foreground hover:bg-primary/90 text-lg py-6"  
-          >  
-            <a href={finalGoogleLoginUrl} className="flex items-center justify-center gap-3">  
-              <FaGoogle className="h-5 w-5" />  
-              Sign in with Google  
-            </a>  
-          </Button>  
-        </CardContent>  
-        <CardFooter className="flex-col items-center text-center pt-6">  
-          <p className="text-xs text-muted-foreground">  
-            By proceeding, you agree to our Terms of Service and Privacy Policy.  
-          </p>  
-        </CardFooter>  
-      </Card>  
-    </div>  
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-muted to-primary/10 px-4 py-12">
+      <div className="w-full max-w-md">
+        <div className="bg-card rounded-2xl shadow ring-1 ring-border/10 p-8 flex flex-col items-center gap-8">
+          {/* Brand/Logo */}
+          <div className="flex flex-col items-center gap-2">
+            <div className="h-14 w-14 rounded-full bg-gradient-to-br from-primary/80 to-primary/40 flex items-center justify-center">
+              <span className="text-2xl font-bold text-primary-foreground select-none">AI</span>
+            </div>
+            <h1 className="text-2xl font-extrabold text-foreground tracking-tight">Sign in to AI Chat</h1>
+            <p className="text-base text-muted-foreground text-center max-w-xs">Start chatting with the latest AI models. Fast, private, and secure.</p>
+          </div>
+
+          {/* Error/Message */}
+          {errorReason && (
+            <div className="w-full rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-center text-sm text-destructive shadow-sm">
+              <p>{errorReason}</p>
+            </div>
+          )}
+          {displayMessage && !errorReason && (
+            <div className="w-full rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-center text-sm text-primary shadow-sm">
+              <p>{displayMessage}</p>
+            </div>
+          )}
+
+          {/* Login Button */}
+          <Button
+            asChild
+            size="lg"
+            className="w-full flex items-center justify-center gap-3 bg-primary text-primary-foreground hover:bg-primary/90 text-lg py-5 font-semibold border border-border/30 transition-all duration-200"
+          >
+            <a href={finalGoogleLoginUrl}>
+              <span>Continue with Google</span>
+            </a>
+          </Button>
+
+          {/* Info/Privacy */}
+          <div className="w-full text-center text-xs text-muted-foreground/80">
+            By signing in, you agree to our{' '}
+            <a href="#" className="underline underline-offset-4 hover:text-primary">Terms</a> and{' '}
+            <a href="#" className="underline underline-offset-4 hover:text-primary">Privacy Policy</a>.
+          </div>
+        </div>
+      </div>
+    </div>
   );  
-}  
+}

@@ -1,28 +1,31 @@
 // app/components/chat/ChatInputBar.tsx
-import React, { useRef, useEffect } from 'react'; // Removed useState
-import { ArrowUp, Paperclip, Settings2, Brain } from 'lucide-react'; // Added Brain
+import React, { useRef, useEffect, useState } from 'react';
+import { ArrowUp, Paperclip, Settings2, Brain, X, FileImage } from 'lucide-react';
 import type { AIModelConfig } from '~/lib/ai-models';
-import { ModelSelector } from './ModelSelector'; // Import ModelSelector
+import { ModelSelector } from './ModelSelector';
 import { Switch } from '~/components/ui/switch';
 import { Label } from '~/components/ui/label';
-import { usePerChatThinkingToggle } from '~/hooks/usePerChatThinkingToggle'; // Import the new hook
+import { usePerChatThinkingToggle } from '~/hooks/usePerChatThinkingToggle';
+import { handleImageUpload } from '~/lib/image-upload.client'; // Import the upload handler
+import { Badge } from '~/components/ui/badge'; // For displaying file name
+import { toast } from "sonner"; // For showing errors
 
 const isProbablyMobile = () => typeof window !== 'undefined' && window.innerWidth < 768;
 
 interface ChatInputBarProps {
   input: string;
   onInputChange: (event: React.ChangeEvent<HTMLTextAreaElement>) => void;
-  onSubmit: (options: { thinkingEnabled?: boolean }) => void; // Modified onSubmit
+  onSubmit: (options: { thinkingEnabled?: boolean; imageObjectKey?: string }) => void; // Modified onSubmit
   isLoading: boolean;
   availableModels: AIModelConfig[];
   selectedModel: AIModelConfig;
   onModelChange: (model: AIModelConfig) => void;
-  chatKey: string; // Added chatKey prop
+  chatKey: string;
 }
 
 const MIN_TEXTAREA_HEIGHT_REM = 1.625;
-const TEXTAREA_PADDING_Y_PX = 20; 
-const MAX_TEXTAREA_HEIGHT_PX = 144; 
+const TEXTAREA_PADDING_Y_PX = 20;
+const MAX_TEXTAREA_HEIGHT_PX = 144;
 
 export function ChatInputBar({
   input,
@@ -32,9 +35,14 @@ export function ChatInputBar({
   availableModels,
   selectedModel,
   onModelChange,
-  chatKey, // Destructure chatKey
+  chatKey,
 }: ChatInputBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // State for image upload
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<{ key: string; name: string; url: string; } | null>(null);
 
   const defaultThinkingToggleState = selectedModel?.uiOptions?.thinkingToggleSettings?.defaultToggleState ?? false;
   const { thinkingEnabled, handleThinkingToggleChange } = usePerChatThinkingToggle(
@@ -42,61 +50,100 @@ export function ChatInputBar({
     defaultThinkingToggleState
   );
 
-  // Effect to potentially reset thinkingEnabled if the model changes and has a *different* default state
-  // and the toggle is shown. This ensures the hook's internal state aligns if the default changes.
+  // Reset uploaded file when the chat changes
   useEffect(() => {
-    const newDefaultState = selectedModel?.uiOptions?.thinkingToggleSettings?.defaultToggleState ?? false;
-    // This effect primarily ensures that if the default state for a *newly selected model*
-    // differs, the hook gets a chance to re-evaluate its initial state based on that new default.
-    // The hook itself handles persistence, this is more about reacting to model changes.
-    // If the toggle is not shown, thinkingEnabled is effectively managed by the hook based on its last known state or default.
-    if (selectedModel?.uiOptions?.thinkingToggleSettings?.showToggle) {
-        // If the current thinkingEnabled state in the hook doesn't match the new default for the selected model,
-        // and the chatKey hasn't changed (meaning we are on the same chat but model changed),
-        // then we might want to update it. However, usePerChatThinkingToggle's own useEffect
-        // already listens to defaultToggleState changes. So, this explicit setThinkingEnabled might be redundant
-        // if the hook correctly re-initializes or updates based on defaultToggleState prop change.
-        // Let's rely on the hook's internal useEffect for defaultToggleState changes.
-    }
-  }, [selectedModel, chatKey, handleThinkingToggleChange]);
-
+    setUploadedFile(null);
+  }, [chatKey]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
     if (textarea) {
-      textarea.style.height = 'auto'; 
+      textarea.style.height = 'auto';
       const scrollHeight = textarea.scrollHeight;
       const newHeight = Math.min(scrollHeight, MAX_TEXTAREA_HEIGHT_PX);
       textarea.style.height = `${newHeight}px`;
     }
   }, [input]);
 
+  const handleFileAttachClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    try {
+      const { objectKey, readUrl } = await handleImageUpload(file);
+      setUploadedFile({ key: objectKey, name: file.name, url: readUrl });
+      toast.success("Image uploaded successfully!");
+    } catch (error) {
+      console.error("Upload failed:", error);
+      toast.error((error as Error).message || "Failed to upload image.");
+      setUploadedFile(null);
+    } finally {
+      setIsUploading(false);
+      // Reset file input value to allow re-uploading the same file
+      if(fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleRemoveFile = () => {
+    setUploadedFile(null);
+    // Here you might want to call an API to delete the file from the storage if needed
+  };
+
   const handleTextareaKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const mobile = isProbablyMobile();
-    if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey)) return; 
-    if (mobile && e.key === 'Enter') return; 
+    if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey)) return;
+    if (mobile && e.key === 'Enter') return;
     if (e.key === 'Enter' && !mobile) {
       e.preventDefault();
-      if (!isLoading && (input || '').trim()) {
+      if (!isLoading && ((input || '').trim() || uploadedFile)) {
         const form = e.currentTarget.form;
         if (form) form.requestSubmit();
       }
     }
   };
 
-  const isSendDisabled = isLoading || !(input || '').trim();
+  const isSendDisabled = isLoading || isUploading || !((input || '').trim() || uploadedFile);
 
   return (
     <div className="w-full flex-shrink-0">
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (!isLoading && (input || '').trim()) {
-            onSubmit({ thinkingEnabled: selectedModel?.uiOptions?.thinkingToggleSettings ? thinkingEnabled : undefined });
+          if (!isSendDisabled) {
+            onSubmit({
+              thinkingEnabled: selectedModel?.uiOptions?.thinkingToggleSettings ? thinkingEnabled : undefined,
+              imageObjectKey: uploadedFile?.key,
+            });
+            // Clear input and reset file after submission
+            onInputChange({ target: { value: '' } } as any);
+            setUploadedFile(null);
           }
         }}
         className="relative mx-auto flex w-full flex-col rounded-xl bg-card p-2.5 shadow-xl ring-1 ring-border sm:p-3"
       >
+        {uploadedFile && (
+          <div className="px-3 pt-1">
+            <Badge variant="secondary" className="flex items-center gap-2">
+              <FileImage size={14} />
+              <span className="truncate max-w-xs">{uploadedFile.name}</span>
+              <button
+                type="button"
+                onClick={handleRemoveFile}
+                className="ml-1 p-0.5 rounded-full hover:bg-muted-foreground/20"
+                aria-label="Remove file"
+              >
+                <X size={14} />
+              </button>
+            </Badge>
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           value={input || ''}
@@ -109,24 +156,24 @@ export function ChatInputBar({
             minHeight: `calc(${MIN_TEXTAREA_HEIGHT_REM}rem + ${TEXTAREA_PADDING_Y_PX}px)`,
             maxHeight: `${MAX_TEXTAREA_HEIGHT_PX}px`,
           }}
-          disabled={isLoading}
+          disabled={isLoading || isUploading}
           aria-label="Chat message input"
         />
         <div className="mt-2 flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             <ModelSelector
-              models={availableModels}
+              models={availableModels.filter(m => m.is_active_model)}
               selectedModel={selectedModel}
               onModelChange={onModelChange}
-              disabled={isLoading || !availableModels || availableModels.length === 0}
+              disabled={isLoading || isUploading || !availableModels || availableModels.filter(m => m.is_active_model).length === 0}
             />
             {selectedModel?.uiOptions?.thinkingToggleSettings?.showToggle && (
               <div className="flex items-center space-x-2 ml-2">
                 <Switch
                   id="thinking-toggle"
                   checked={thinkingEnabled}
-                  onCheckedChange={handleThinkingToggleChange} // Use the handler from the hook
-                  disabled={isLoading}
+                  onCheckedChange={handleThinkingToggleChange}
+                  disabled={isLoading || isUploading}
                 />
                 <Label htmlFor="thinking-toggle" className="flex items-center text-sm text-primary cursor-pointer select-none">
                   AI Thinking
@@ -135,9 +182,27 @@ export function ChatInputBar({
             )}
           </div>
           <div className="flex items-center gap-1 sm:gap-1.5">
-            <button type="button" className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:opacity-50" disabled={true} title="Attach file (soon)">
-              <Paperclip size={18} strokeWidth={2} />
-            </button>
+            {selectedModel?.uiOptions?.supportsImageInput && (
+              <>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  className="hidden"
+                  accept="image/png, image/jpeg"
+                  disabled={isUploading || !!uploadedFile}
+                />
+                <button
+                  type="button"
+                  onClick={handleFileAttachClick}
+                  className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:opacity-50"
+                  disabled={isUploading || !!uploadedFile}
+                  title={isUploading ? "Uploading..." : "Attach image"}
+                >
+                  <Paperclip size={18} strokeWidth={2} />
+                </button>
+              </>
+            )}
             <button type="button" className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted sm:p-2 rounded-md disabled:opacity-50" disabled={true} title="Model options (soon)">
               <Settings2 size={18} strokeWidth={2} />
             </button>

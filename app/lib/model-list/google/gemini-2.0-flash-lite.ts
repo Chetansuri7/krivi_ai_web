@@ -5,6 +5,7 @@ export const gemini20FlashLiteModel: AIModelConfig = {
   shortName: "2.0 Flash Lite",
   model: "gemini-2.0-flash-lite-001",
   provider: "google",
+  is_active_model: false,
   isDefault: false,
   requestPayload: {
     messages: [

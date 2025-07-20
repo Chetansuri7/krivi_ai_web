@@ -5,6 +5,7 @@ export const gemini25ProPreview0506Model: AIModelConfig = {
   shortName: "2.5 Pro",
   model: "gemini-2.5-pro-preview-05-06",
   provider: "google",
+  is_active_model: false,
   isDefault: false,
   requestPayload: {
     messages: [
@@ -25,6 +26,7 @@ export const gemini25ProPreview0506Model: AIModelConfig = {
     }
   },
   uiOptions: {
+    supportsImageInput: true,
     thinkingToggleSettings: {
       canDisable: false,
       showToggle: false, // Do not show toggle as thinking cannot be disabled

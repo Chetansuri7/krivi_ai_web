@@ -5,6 +5,7 @@ export const gemini25FlashLitePreview0617Model: AIModelConfig = {
   shortName: "2.5 Flash Lite",
   model: "gemini-2.5-flash-lite-preview-06-17",
   provider: "google",
+  is_active_model: false,
   isDefault: false,
   requestPayload: {
     messages: [

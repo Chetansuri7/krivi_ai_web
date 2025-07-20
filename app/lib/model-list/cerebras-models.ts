@@ -6,6 +6,7 @@ export const cerebrasModels: AIModelConfig[] = [
     shortName: "Llama 8b",
     model: "llama3.1-8b",
     provider: "cerebras",
+    is_active_model: false,
     requestPayload: {},
   },
   {
@@ -13,6 +14,7 @@ export const cerebrasModels: AIModelConfig[] = [
     shortName: "Qwen 32b",
     model: "qwen-3-32b",
     provider: "cerebras",
+    is_active_model: false,
     requestPayload: {},
   },
 ];

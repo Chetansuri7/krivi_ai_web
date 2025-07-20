@@ -16,16 +16,21 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });
 }
 
+import { useMemo } from "react";
+import { v4 as uuidv4 } from "uuid";
+
 export default function AppRootNewChatPage() {
-  const { initialChatId, initialMessages } = useLoaderData<{
+  // always generate a new unique id for new chat sessions
+  const { initialMessages } = useLoaderData<{
     initialChatId: null;
     initialMessages: Message[];
   }>();
+  const chatId = useMemo(() => uuidv4(), []);
 
   return (
     <ChatPageLayout
-      key="new-chat-page" // Stable key for the new chat page instance
-      initialChatIdFromLoader={initialChatId}
+      key={chatId}
+      initialChatIdFromLoader={chatId}
       initialMessagesProp={initialMessages}
     />
   );

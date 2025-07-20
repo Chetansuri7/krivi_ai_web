@@ -1,5 +1,12 @@
 // app/lib/ai-models.ts
 export interface AIModelConfig {
+  /**
+   * If false, this model is considered "inactive" and should not be selectable or shown in UI.
+   * Keeping config but hiding from main flows allows quick reactivation, and preserves system state.
+   * Defaults to true if not specified (for backward compatibility).
+   */
+  is_active_model: boolean;
+
   displayName: string;
   /**
    * For smaller screens, if defined, this will be shown instead of displayName.
@@ -11,6 +18,7 @@ export interface AIModelConfig {
   requestPayload: Record<string, any>; // Added for model-specific payloads
   isDefault?: boolean; // Optional: useful for selecting default
   uiOptions?: { // For model-specific UI elements
+    supportsImageInput?: boolean; // Add this line
     thinkingToggleSettings?: {
       showToggle: boolean;                // UI should show toggle if model.canDisable is true.
       canDisable: boolean;                // Directly from model's backend config.

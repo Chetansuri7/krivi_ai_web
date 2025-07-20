@@ -101,7 +101,7 @@ export function MessageItem({ message }: MessageItemProps) {
           ref={contentBubbleRef}
           className={
             isUser
-              ? "shadow rounded-lg px-3 py-2 bg-primary text-primary-foreground"
+              ? "rounded-lg px-3 py-3 m-0 bg-primary/40 text-black"
               : "prose prose-sm text-foreground p-3"
           }
           style={{
